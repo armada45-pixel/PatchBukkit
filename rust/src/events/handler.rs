@@ -4463,7 +4463,11 @@ where
         if let Some(response) =
             crate::java::jvm::worker::fire_event_direct(payload, self.plugin_name.clone())
         {
-            event.set_cancelled(response.cancelled);
+            // Pumpkin runs every plugin's handler and each one sees a fresh, uncancelled Bukkit
+            // event, so `false` here only means "this plugin did not cancel": never un-cancel.
+            if response.cancelled {
+                event.set_cancelled(true);
+            }
             if let Some(event_data) = response.data.and_then(|d| d.data) {
                 let _ = event.apply_modifications(server, event_data);
             }
