@@ -460,8 +460,7 @@ public final class CommandBridge {
     static String commandLabel(String command) {
         String s = command == null ? "" : command.trim();
         if (s.startsWith("/")) s = s.substring(1);
-        int space = s.indexOf(' ');
-        return "/" + (space < 0 ? s : s.substring(0, space));
+        return "/" + s.split("(?U)\\s+", 2)[0];
     }
 
     public static boolean dispatchRaw(String senderUuid, String senderName, boolean isOp, String commandLine) {
