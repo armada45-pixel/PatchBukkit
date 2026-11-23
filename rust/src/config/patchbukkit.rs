@@ -195,6 +195,9 @@ impl PatchBukkitConfig {
 [settings]
 # Minimum Bukkit/Paper plugin API version required (e.g. "1.20"). Leave unset for all versions.
 # minimum-supported-plugin-api = "1.20"
+# Kick players who join before the Bukkit plugins are enabled (the first ~minute after start).
+# Until then plugins such as AuthMe or WorldGuard cannot act on the player.
+# block-joins-until-ready = false
 
 [jvm]
 # Maximum and initial heap memory allocated to the embedded JVM (e.g. "2G", "512M")
