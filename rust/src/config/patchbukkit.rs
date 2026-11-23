@@ -23,6 +23,10 @@ pub struct PatchBukkitConfig {
 pub struct SettingsConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub minimum_supported_plugin_api: Option<String>,
+    /// Kick players who join before the Bukkit plugins are enabled. Without this, players who
+    /// join in the first seconds after startup are not checked by plugins such as AuthMe or WorldGuard.
+    #[serde(default)]
+    pub block_joins_until_ready: bool,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, Default, PartialEq, Eq)]
@@ -152,6 +156,7 @@ impl PatchBukkitConfig {
     pub const DEFAULT: PatchBukkitConfig = PatchBukkitConfig {
         settings: SettingsConfig {
             minimum_supported_plugin_api: None,
+            block_joins_until_ready: false,
         },
         jvm: JvmConfig {
             max_heap: None,
@@ -266,6 +271,7 @@ minimum-supported-plugin-api = "1.20"
             config.settings.minimum_supported_plugin_api.as_deref(),
             Some("1.20")
         );
+        assert!(!config.settings.block_joins_until_ready);
         assert_eq!(config.plugins.directory, "patchbukkit-plugins");
         assert_eq!(config.diagnostics.log_level, "info");
         assert!(config.libraries.download_dependencies);
@@ -276,6 +282,7 @@ minimum-supported-plugin-api = "1.20"
         let toml_str = r#"
 [settings]
 minimum-supported-plugin-api = "1.20.4"
+block-joins-until-ready = true
 
 [jvm]
 max-heap = "4G"
@@ -299,6 +306,7 @@ debug-bridge = true
             config.settings.minimum_supported_plugin_api.as_deref(),
             Some("1.20.4")
         );
+        assert!(config.settings.block_joins_until_ready);
         assert_eq!(config.jvm.max_heap.as_deref(), Some("4G"));
         assert_eq!(config.jvm.initial_heap.as_deref(), Some("1G"));
         assert_eq!(
