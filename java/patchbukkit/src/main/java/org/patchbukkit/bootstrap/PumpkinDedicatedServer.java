@@ -202,11 +202,13 @@ public final class PumpkinDedicatedServer {
             }
         }
 
+        String overworldName = overworld == null || overworld.res.getName().isEmpty()
+            ? server.settings.getProperties().levelName
+            : overworld.res.getName();
         if (overworld != null) {
-            String name = overworld.res.getName().isEmpty() ? server.settings.getProperties().levelName : overworld.res.getName();
             createPumpkinLevel(
                 server,
-                name,
+                overworldName,
                 overworld.uuid,
                 World.Environment.NORMAL,
                 LevelStem.OVERWORLD,
@@ -248,7 +250,7 @@ public final class PumpkinDedicatedServer {
                 dimType = overworldType;
             }
 
-            String name = info.res.getName().isEmpty() ? "world_" + env.name().toLowerCase() : info.res.getName();
+            String name = bukkitWorldName(info.res.getName(), overworldName, env);
             createPumpkinLevel(
                 server,
                 name,
@@ -271,6 +273,20 @@ public final class PumpkinDedicatedServer {
                 EntityBridge.syncEntitiesFromPumpkin(level, worldUid);
             }
         }
+    }
+
+    /**
+     * Bukkit name for a Pumpkin dimension other than the overworld. Pumpkin's dimensions share one
+     * level.dat, so they all report the overworld's name, and Bukkit keeps one world per name:
+     * the last one created (the end) would replace the others. Use Paper's names instead.
+     */
+    static String bukkitWorldName(String pumpkinName, String overworldName, World.Environment env) {
+        if (!pumpkinName.isEmpty() && !pumpkinName.equals(overworldName)) return pumpkinName;
+        return switch (env) {
+            case NETHER -> overworldName + "_nether";
+            case THE_END -> overworldName + "_the_end";
+            default -> pumpkinName.isEmpty() ? "world_" + env.name().toLowerCase() : pumpkinName;
+        };
     }
 
     private record PumpkinWorldInfo(UUID uuid, GetWorldInfoResponse res) {}
