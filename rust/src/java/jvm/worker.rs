@@ -501,7 +501,10 @@ impl JvmWorker {
             .option("--add-opens=java.base/java.lang.reflect=ALL-UNNAMED")
             .option("--add-opens=java.base/jdk.internal.vm=ALL-UNNAMED")
             .option("--add-opens=java.management/sun.management=ALL-UNNAMED")
-            .option("-Dcom.google.protobuf.useUnsafe=false");
+            .option("-Dcom.google.protobuf.useUnsafe=false")
+            // The JVM lives inside Pumpkin: without -Xrs it takes SIGTERM/SIGINT and exits the
+            // process before Pumpkin's own shutdown saves the world and level.dat.
+            .option("-Xrs");
 
         if let Some(ref agent_jar) = patchbukkit_jar {
             builder = builder.option(format!("-javaagent:{}", agent_jar.to_string_lossy()));
