@@ -517,20 +517,18 @@ public final class ServerBridge {
         if (creator == null || !NativeFastPathFfi.isInitialized() || SYNCING.get()) return null;
         World existing = server.getWorld(creator.name());
         if (existing != null) return existing;
+        if (creator.environment() != World.Environment.NORMAL) {
+            // A second nether/end World made from the plugin crashes Pumpkin's tick loop (SIGSEGV in flush_block_updates).
+            throw new IllegalStateException("PatchBukkit: extra " + creator.environment() + " worlds are not supported on Pumpkin yet ('" + creator.name() + "')");
+        }
         SYNCING.set(true);
         try {
             NamespacedKey key = creator.key();
             String folder = "dimensions/" + key.getNamespace() + "/" + key.getKey();
-            String dim = switch (creator.environment()) {
-                case NETHER -> "minecraft:the_nether";
-                case THE_END -> "minecraft:the_end";
-                default -> "minecraft:overworld";
-            };
-            linkLegacyDimensionFolder(server.getLevelDirectory().resolve(folder), creator.environment());
             CreateWorldResponse res = NativeBridgeFfi.createWorld(
                 CreateWorldRequest.newBuilder()
                     .setName(folder)
-                    .setDimension(dim)
+                    .setDimension("minecraft:overworld")
                     .setSeed(creator.seed())
                     .build()
             );
@@ -542,24 +540,6 @@ public final class ServerBridge {
             return null;
         } finally {
             SYNCING.set(false);
-        }
-    }
-
-    /**
-     * Pumpkin opens a nether or end world only from {@code <root>/DIM-1} or {@code <root>/DIM1} (or its own
-     * layout), while Paper keeps a custom nether or end directly in {@code dimensions/<ns>/<key>}.
-     * A link from that folder to itself lets Pumpkin read Paper's chunks.
-     */
-    static void linkLegacyDimensionFolder(Path folder, World.Environment env) throws java.io.IOException {
-        String link = switch (env) {
-            case NETHER -> "DIM-1";
-            case THE_END -> "DIM1";
-            default -> null;
-        };
-        if (link == null || !Files.isDirectory(folder.resolve("region"))) return;
-        Path linkPath = folder.resolve(link);
-        if (!Files.exists(linkPath, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-            Files.createSymbolicLink(linkPath, Path.of("."));
         }
     }
 
