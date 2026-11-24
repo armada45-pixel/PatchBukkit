@@ -134,8 +134,10 @@ public final class PlayerBridge {
 
             // 3. Hook CraftPlayer (health, XP, gamemode, abilities/flight, sneaking/sprinting, ping, kick, messaging, time/weather, UI/sounds/particles)
             try {
-                byteBuddy
-                    .redefine(CraftPlayer.class)
+                remember(byteBuddy
+                    .redefine(CraftPlayer.class, currentBytes(CraftPlayer.class))
+                    // CraftPlayer overrides teleport0 without calling CraftEntity's, so hook it here too.
+                    .visit(Advice.to(EntityBridge.OnTeleportAdvice.class).on(ElementMatchers.named("teleport0")))
                     .visit(Advice.to(OnGetHealthAdvice.class).on(ElementMatchers.named("getHealth").and(ElementMatchers.takesNoArguments())))
                     .visit(Advice.to(OnSetRealHealthAdvice.class).on(ElementMatchers.named("setRealHealth").and(ElementMatchers.takesArguments(double.class))))
                     .visit(Advice.to(OnGetGameModeAdvice.class).on(ElementMatchers.named("getGameMode").and(ElementMatchers.takesNoArguments())))
@@ -209,7 +211,7 @@ public final class PlayerBridge {
                     .visit(Advice.to(OnGetLocaleAdvice.class).on(ElementMatchers.named("getLocale").and(ElementMatchers.takesNoArguments())))
                     .visit(Advice.to(OnUpdateInventoryAdvice.class).on(ElementMatchers.named("updateInventory").and(ElementMatchers.takesNoArguments())))
                     .visit(Advice.to(OnSendHealthUpdateAdvice.class).on(ElementMatchers.named("sendHealthUpdate").and(ElementMatchers.takesNoArguments())))
-                    .make()
+                    .make())
                     .load(CraftPlayer.class.getClassLoader(), ClassReloadingStrategy.fromInstalledAgent());
             } catch (Throwable t) {
                 LOGGER.log(Level.WARNING, "[PatchBukkit] Failed to hook CraftPlayer in PlayerBridge", t);

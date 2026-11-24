@@ -6,6 +6,7 @@ import ca.spottedleaf.moonrise.patches.chunk_system.level.entity.EntityLookup;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -30,6 +31,8 @@ import org.bukkit.craftbukkit.entity.CraftEntity;
 import org.bukkit.craftbukkit.entity.CraftLivingEntity;
 import org.bukkit.craftbukkit.entity.CraftPlayer;
 import org.bukkit.entity.Pose;
+import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
+import io.papermc.paper.entity.TeleportFlag;
 import org.bukkit.util.Vector;
 import org.patchbukkit.bridge.BridgeUtils;
 import org.patchbukkit.bridge.NativeFastPathFfi;
@@ -96,9 +99,10 @@ public final class EntityBridge {
 
             // 3. Intercept CraftEntity mutations (teleport and velocity) and live state queries (getLocation / getVelocity)
             try {
-                byteBuddy
-                    .redefine(CraftEntity.class)
+                remember(byteBuddy
+                    .redefine(CraftEntity.class, currentBytes(CraftEntity.class))
                     .visit(Advice.to(OnTeleportAdvice.class).on(ElementMatchers.named("teleport0")))
+                    .visit(Advice.to(OnTeleportAsyncAdvice.class).on(ElementMatchers.named("teleportAsync").and(ElementMatchers.takesArguments(3))))
                     .visit(Advice.to(OnSetVelocityAdvice.class).on(ElementMatchers.named("setVelocity").and(ElementMatchers.takesArguments(Vector.class))))
                     .visit(Advice.to(OnSyncStateAdvice.class).on(
                         ElementMatchers.named("getLocation")
@@ -113,7 +117,7 @@ public final class EntityBridge {
                     .visit(Advice.to(OnGetEntityIdAdvice.class).on(
                         ElementMatchers.named("getEntityId").and(ElementMatchers.takesNoArguments())
                     ))
-                    .make()
+                    .make())
                     .load(CraftEntity.class.getClassLoader(), ClassReloadingStrategy.fromInstalledAgent());
             } catch (Throwable t) {
                 LOGGER.log(Level.WARNING, "[PatchBukkit] Failed to hook CraftEntity mutations", t);
@@ -406,6 +410,39 @@ public final class EntityBridge {
             if (success) {
                 EntityBridge.handleEntityTeleported(craftEntity, location);
             }
+        }
+    }
+
+    /**
+     * Paper's teleportAsync waits for its own chunk system, which never loads chunks in the headless
+     * runtime, so the future never completes. Pumpkin owns the chunks: teleport right away instead.
+     */
+    public static CompletableFuture<Boolean> teleportNow(CraftEntity entity, Location location, TeleportCause cause, TeleportFlag[] flags) {
+        try {
+            return CompletableFuture.completedFuture(entity.teleport(location, cause, flags));
+        } catch (Throwable t) {
+            LOGGER.log(Level.WARNING, "[PatchBukkit] teleportAsync of " + entity.getName() + " failed", t);
+            return CompletableFuture.completedFuture(false);
+        }
+    }
+
+    public static final class OnTeleportAsyncAdvice {
+        @Advice.OnMethodEnter(skipOn = Advice.OnNonDefaultValue.class)
+        public static CompletableFuture<Boolean> onEnter(
+            @Advice.This CraftEntity entity,
+            @Advice.Argument(0) Location location,
+            @Advice.Argument(1) TeleportCause cause,
+            @Advice.Argument(2) TeleportFlag[] flags
+        ) {
+            return EntityBridge.teleportNow(entity, location, cause, flags);
+        }
+
+        @Advice.OnMethodExit
+        public static void onExit(
+            @Advice.Enter CompletableFuture<Boolean> done,
+            @Advice.Return(readOnly = false) CompletableFuture<Boolean> result
+        ) {
+            if (done != null) result = done;
         }
     }
 
