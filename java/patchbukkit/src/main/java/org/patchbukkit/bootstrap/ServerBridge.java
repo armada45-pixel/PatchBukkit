@@ -564,10 +564,19 @@ public final class ServerBridge {
     }
 
     /** Pumpkin's world folder (in the server's working directory), so plugins find the real worlds. */
+    static volatile boolean loggedLevelDir;
+
     public static Path pumpkinLevelDirectory(Path paperDir) {
-        if (paperDir == null || !NativeFastPathFfi.isInitialized()) return paperDir;
-        Path pumpkinDir = Path.of(paperDir.getFileName().toString()).toAbsolutePath();
-        return Files.isDirectory(pumpkinDir) ? pumpkinDir : paperDir;
+        Path result = paperDir;
+        if (paperDir != null && NativeFastPathFfi.isInitialized()) {
+            Path pumpkinDir = Path.of(paperDir.getFileName().toString()).toAbsolutePath();
+            if (Files.isDirectory(pumpkinDir)) result = pumpkinDir;
+        }
+        if (!loggedLevelDir) {
+            loggedLevelDir = true;
+            LOGGER.info("[PatchBukkit] getLevelDirectory: paper=" + paperDir + " fastPath=" + NativeFastPathFfi.isInitialized() + " -> " + result);
+        }
+        return result;
     }
 
     public static void pushUnloadWorldToPumpkin(World world, boolean save) {

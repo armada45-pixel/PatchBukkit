@@ -887,4 +887,10 @@ public class HeadlessPaperServerTest {
         assertTrue(enableAa > enableMm, "POSTWORLD plugin AaLeaf must enable after MmMiddle: " + PLUGIN_LIFECYCLE_LOG);
         assertTrue(serverLoad > enableAa, "ServerLoadEvent(STARTUP) must fire after POSTWORLD plugins enable: " + PLUGIN_LIFECYCLE_LOG);
     }
+
+    @Test
+    void getLevelDirectoryGoesThroughServerBridge() {
+        Bukkit.getServer().getLevelDirectory();
+        assertTrue(ServerBridge.loggedLevelDir, "OnGetLevelDirectoryAdvice did not run");
+    }
 }
