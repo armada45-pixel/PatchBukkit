@@ -1,11 +1,14 @@
 use std::{
     cell::Cell,
     collections::HashMap,
-    sync::{Arc, LazyLock, Mutex},
+    sync::{Arc, LazyLock, Mutex, OnceLock},
 };
 
 use anyhow::Result;
-use jni::Env;
+use jni::{
+    Env,
+    objects::{Global, JClass},
+};
 use prost::Message;
 use pumpkin::{entity::player::Player, server::Server};
 
@@ -24,6 +27,10 @@ thread_local! {
     /// Re-entrant-safe scratch buffer for Protobuf serialization of outgoing events.
     static ENCODE_BUF: Cell<Vec<u8>> = const { Cell::new(Vec::new()) };
 }
+
+/// `PatchBukkitEventFactory`, resolved once at JVM start. Looking it up by name on every event fails
+/// when the event fires inside a Java upcall, where JNI uses the JDK's own class loader.
+static EVENT_FACTORY: OnceLock<Global<JClass<'static>>> = OnceLock::new();
 
 pub struct EventManager;
 
@@ -46,6 +53,15 @@ impl EventManager {
         plugin_name: String,
     ) -> Result<FireEventResponse> {
         Self::fire_event_static(env, payload, plugin_name)
+    }
+
+    /// Resolves and caches the event factory class; call on a thread where `FindClass` sees PatchBukkit.
+    pub fn cache_classes(env: &mut Env) -> Result<()> {
+        let class = env.find_class(jni::jni_str!(
+            "org/patchbukkit/events/PatchBukkitEventFactory"
+        ))?;
+        let _ = EVENT_FACTORY.set(env.new_global_ref(class)?);
+        Ok(())
     }
 
     pub fn fire_event_static(
@@ -135,8 +151,11 @@ impl EventManager {
         let j_bytes = j_bytes_res?;
         let plugin_name_jstr = env.new_string(&plugin_name)?;
 
+        let factory = EVENT_FACTORY
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("PatchBukkitEventFactory is not cached yet"))?;
         let result = match env.call_static_method(
-            jni::jni_str!("org/patchbukkit/events/PatchBukkitEventFactory"),
+            factory,
             jni::jni_str!("fireEventFromBytes"),
             jni::jni_sig!("([BLjava/lang/String;)[B"),
             &[(&j_bytes).into(), (&plugin_name_jstr).into()],

@@ -556,6 +556,7 @@ impl JvmWorker {
                 tracing::error!("Failed to initialize callbacks: {e:?}");
                 e
             })?;
+            EventManager::cache_classes(env)?;
 
             boot_headless_paper(env, paper_runtime_path, plugins_dir)?;
 
