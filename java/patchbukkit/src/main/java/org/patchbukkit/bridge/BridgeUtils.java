@@ -3,6 +3,26 @@ package org.patchbukkit.bridge;
 import java.util.UUID;
 
 public class BridgeUtils {
+    private static final java.util.Map<String, byte[]> REDEFINED = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Class file to redefine {@code type} from: the bytes an earlier bridge produced, if any. Several
+     * bridges redefine the same class (CraftServer, CraftLivingEntity, CraftHumanEntity); redefining
+     * from the original class file silently drops the advice the earlier bridge added.
+     */
+    public static net.bytebuddy.dynamic.ClassFileLocator currentBytes(Class<?> type) {
+        var original = net.bytebuddy.dynamic.ClassFileLocator.ForClassLoader.of(type.getClassLoader());
+        byte[] bytes = REDEFINED.get(type.getName());
+        return bytes == null ? original : new net.bytebuddy.dynamic.ClassFileLocator.Compound(
+            net.bytebuddy.dynamic.ClassFileLocator.Simple.of(type.getName(), bytes), original);
+    }
+
+    /** Records the redefined bytes for {@link #currentBytes}; returns {@code type} unchanged. */
+    public static <T> net.bytebuddy.dynamic.DynamicType.Unloaded<T> remember(net.bytebuddy.dynamic.DynamicType.Unloaded<T> type) {
+        REDEFINED.put(type.getTypeDescription().getName(), type.getBytes());
+        return type;
+    }
+
     public static UUID convertUuid(patchbukkit.common.UUID uuid) {
         return UUID.fromString(uuid.getValue());
     }

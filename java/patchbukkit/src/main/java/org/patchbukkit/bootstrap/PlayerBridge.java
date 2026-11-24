@@ -1,5 +1,7 @@
 package org.patchbukkit.bootstrap;
 
+import static org.patchbukkit.bridge.BridgeUtils.currentBytes;
+import static org.patchbukkit.bridge.BridgeUtils.remember;
 import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -91,8 +93,8 @@ public final class PlayerBridge {
 
             // 1. Hook CraftLivingEntity (getHealth, setHealth, damage, isSwimming, isGliding)
             try {
-                byteBuddy
-                    .redefine(CraftLivingEntity.class)
+                remember(byteBuddy
+                    .redefine(CraftLivingEntity.class, currentBytes(CraftLivingEntity.class))
                     .visit(Advice.to(OnGetHealthAdvice.class).on(ElementMatchers.named("getHealth").and(ElementMatchers.takesNoArguments())))
                     .visit(Advice.to(OnSetHealthAdvice.class).on(ElementMatchers.named("setHealth").and(ElementMatchers.takesArguments(double.class))))
                     .visit(Advice.to(OnDamageAdvice.class).on(ElementMatchers.named("damage").and(ElementMatchers.takesArgument(0, double.class))))
@@ -100,7 +102,7 @@ public final class PlayerBridge {
                         ElementMatchers.named("isSwimming").and(ElementMatchers.takesNoArguments())
                             .or(ElementMatchers.named("isGliding").and(ElementMatchers.takesNoArguments()))
                     ))
-                    .make()
+                    .make())
                     .load(CraftLivingEntity.class.getClassLoader(), ClassReloadingStrategy.fromInstalledAgent());
             } catch (Throwable t) {
                 LOGGER.log(Level.WARNING, "[PatchBukkit] Failed to hook CraftLivingEntity in PlayerBridge", t);
@@ -108,8 +110,8 @@ public final class PlayerBridge {
 
             // 2. Hook CraftHumanEntity (food, saturation, exhaustion, gamemode, op)
             try {
-                byteBuddy
-                    .redefine(CraftHumanEntity.class)
+                remember(byteBuddy
+                    .redefine(CraftHumanEntity.class, currentBytes(CraftHumanEntity.class))
                     .visit(Advice.to(OnSyncFoodAdvice.class).on(
                         ElementMatchers.named("getFoodLevel")
                             .or(ElementMatchers.named("getSaturation"))
@@ -124,7 +126,7 @@ public final class PlayerBridge {
                     .visit(Advice.to(OnGetCooldownAdvice.class).on(ElementMatchers.named("getCooldown").and(ElementMatchers.takesArguments(Key.class))))
                     .visit(Advice.to(OnSetCooldownAdvice.class).on(ElementMatchers.named("setCooldown").and(ElementMatchers.takesArguments(Key.class, int.class))))
                     .visit(Advice.to(OnGetEnderChestAdvice.class).on(ElementMatchers.named("getEnderChest").and(ElementMatchers.takesNoArguments())))
-                    .make()
+                    .make())
                     .load(CraftHumanEntity.class.getClassLoader(), ClassReloadingStrategy.fromInstalledAgent());
             } catch (Throwable t) {
                 LOGGER.log(Level.WARNING, "[PatchBukkit] Failed to hook CraftHumanEntity in PlayerBridge", t);

@@ -1,5 +1,7 @@
 package org.patchbukkit.bootstrap;
 
+import static org.patchbukkit.bridge.BridgeUtils.currentBytes;
+import static org.patchbukkit.bridge.BridgeUtils.remember;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -66,14 +68,14 @@ public final class InventoryBridge {
 
             // 1. Hook CraftHumanEntity.getInventory() and getEquipment()
             try {
-                byteBuddy
-                    .redefine(CraftHumanEntity.class)
+                remember(byteBuddy
+                    .redefine(CraftHumanEntity.class, currentBytes(CraftHumanEntity.class))
                     .visit(Advice.to(OnGetInventoryAdvice.class).on(
                         ElementMatchers.named("getInventory")
                             .or(ElementMatchers.named("getEquipment"))
                             .or(ElementMatchers.named("getItemInHand"))
                     ))
-                    .make()
+                    .make())
                     .load(CraftHumanEntity.class.getClassLoader(), ClassReloadingStrategy.fromInstalledAgent());
             } catch (Throwable t) {
                 LOGGER.log(Level.WARNING, "[PatchBukkit] Failed to hook CraftHumanEntity in InventoryBridge", t);

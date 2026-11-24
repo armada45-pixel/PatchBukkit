@@ -1,5 +1,7 @@
 package org.patchbukkit.bootstrap;
 
+import static org.patchbukkit.bridge.BridgeUtils.currentBytes;
+import static org.patchbukkit.bridge.BridgeUtils.remember;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import io.papermc.paper.command.brigadier.PaperCommands;
 import io.papermc.paper.plugin.configuration.PluginMeta;
@@ -61,13 +63,13 @@ public final class CommandBridge {
                 ))
                 .make()
                 .load(org.bukkit.command.SimpleCommandMap.class.getClassLoader(), ClassReloadingStrategy.fromInstalledAgent());
-            byteBuddy
-                .redefine(CraftServer.class)
+            remember(byteBuddy
+                .redefine(CraftServer.class, currentBytes(CraftServer.class))
                 .visit(Advice.to(SyncCommandsAdvice.class).on(
                     ElementMatchers.named("syncCommands")
                         .and(ElementMatchers.takesNoArguments())
                 ))
-                .make()
+                .make())
                 .load(CraftServer.class.getClassLoader(), ClassReloadingStrategy.fromInstalledAgent());
             try {
                 byteBuddy

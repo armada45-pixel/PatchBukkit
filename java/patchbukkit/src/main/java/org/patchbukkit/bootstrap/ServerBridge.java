@@ -1,5 +1,7 @@
 package org.patchbukkit.bootstrap;
 
+import static org.patchbukkit.bridge.BridgeUtils.currentBytes;
+import static org.patchbukkit.bridge.BridgeUtils.remember;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;
@@ -70,8 +72,8 @@ public final class ServerBridge {
 
             // 1. Hook CraftServer
             try {
-                byteBuddy
-                    .redefine(CraftServer.class)
+                remember(byteBuddy
+                    .redefine(CraftServer.class, currentBytes(CraftServer.class))
                     .visit(Advice.to(OnSyncServerInfoAdvice.class).on(
                         ElementMatchers.named("getMotd")
                             .or(ElementMatchers.named("motd").and(ElementMatchers.takesNoArguments()))
@@ -141,7 +143,7 @@ public final class ServerBridge {
                     .visit(Advice.to(OnUnbanIpAdvice.class).on(
                         ElementMatchers.named("unbanIP").and(ElementMatchers.takesArguments(String.class))
                     ))
-                    .make()
+                    .make())
                     .load(CraftServer.class.getClassLoader(), ClassReloadingStrategy.fromInstalledAgent());
             } catch (Throwable t) {
                 LOGGER.log(Level.WARNING, "[PatchBukkit] Failed to hook CraftServer in ServerBridge", t);

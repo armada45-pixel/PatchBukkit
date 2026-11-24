@@ -1,5 +1,7 @@
 package org.patchbukkit.bootstrap;
 
+import static org.patchbukkit.bridge.BridgeUtils.currentBytes;
+import static org.patchbukkit.bridge.BridgeUtils.remember;
 import ca.spottedleaf.moonrise.patches.chunk_system.level.entity.EntityLookup;
 import java.util.Locale;
 import java.util.Set;
@@ -119,8 +121,8 @@ public final class EntityBridge {
 
             // 4. Intercept CraftLivingEntity health & damage for non-player living entities
             try {
-                byteBuddy
-                    .redefine(CraftLivingEntity.class)
+                remember(byteBuddy
+                    .redefine(CraftLivingEntity.class, currentBytes(CraftLivingEntity.class))
                     .visit(Advice.to(OnLivingGetHealthAdvice.class).on(
                         ElementMatchers.named("getHealth").and(ElementMatchers.takesNoArguments())
                     ))
@@ -133,7 +135,7 @@ public final class EntityBridge {
                     .visit(Advice.to(OnLivingDamageItemStackAdvice.class).on(
                         ElementMatchers.named("damageItemStack")
                     ))
-                    .make()
+                    .make())
                     .load(CraftLivingEntity.class.getClassLoader(), ClassReloadingStrategy.fromInstalledAgent());
             } catch (Throwable t) {
                 LOGGER.log(Level.WARNING, "[PatchBukkit] Failed to hook CraftLivingEntity mutations", t);
