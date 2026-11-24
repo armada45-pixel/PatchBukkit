@@ -30,6 +30,7 @@ import net.minecraft.world.level.levelgen.flat.FlatLevelGeneratorSettings;
 import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.world.level.storage.LevelDataAndDimensions;
 import net.minecraft.world.level.storage.PlayerDataStorage;
+import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.spigotmc.SpigotConfig;
 import patchbukkit.bridge.NativeBridgeFfi;
@@ -154,6 +155,31 @@ public final class PumpkinDedicatedServer {
         if (createdLevel != null && createdLevel.getWorld() != null) {
             new org.bukkit.event.world.WorldLoadEvent(createdLevel.getWorld()).callEvent();
         }
+    }
+
+    /** Creates the Bukkit level for a world Pumpkin loaded on request (see ServerBridge.createWorldInPumpkin). */
+    public static World createCustomLevel(DedicatedServer server, String name, UUID uuid, World.Environment env, NamespacedKey key) {
+        Identifier id = Identifier.fromNamespaceAndPath(key.getNamespace(), key.getKey());
+        ResourceKey<LevelStem> stemKey = ResourceKey.create(Registries.LEVEL_STEM, id);
+        ResourceKey<Level> dimKey = ResourceKey.create(Registries.DIMENSION, id);
+        ResourceKey<DimensionType> typeKey = switch (env) {
+            case NETHER -> BuiltinDimensionTypes.NETHER;
+            case THE_END -> BuiltinDimensionTypes.END;
+            default -> BuiltinDimensionTypes.OVERWORLD;
+        };
+        Holder<DimensionType> dimType = server.registryAccess().lookupOrThrow(Registries.DIMENSION_TYPE).getOrThrow(typeKey);
+        GetWorldInfoResponse info = NativeBridgeFfi.getWorldInfo(
+            GetWorldInfoRequest.newBuilder()
+                .setWorldUuid(patchbukkit.common.UUID.newBuilder().setValue(uuid.toString()).build())
+                .build()
+        );
+        int x = info == null ? 0 : info.getSpawnX();
+        int y = info == null ? 64 : info.getSpawnY();
+        int z = info == null ? 0 : info.getSpawnZ();
+        float yaw = info == null ? 0.0F : info.getSpawnAngle();
+        createPumpkinLevel(server, name, uuid, env, stemKey, dimKey, dimType, x, y, z, yaw);
+        ServerLevel level = server.getLevel(dimKey);
+        return level == null ? null : level.getWorld();
     }
 
     public static void initWorlds(DedicatedServer server) {

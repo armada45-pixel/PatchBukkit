@@ -446,14 +446,10 @@ pub fn ffi_native_bridge_create_world_impl(
         _ => pumpkin_data::dimension::Dimension::OVERWORLD,
     };
 
-    let world_name = name.clone();
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    ctx.runtime.spawn(async move {
-        let world = server.create_world(world_name, dim);
-        let _ = tx.send(super::world_ids::bukkit_uuid(&world));
-    });
-
-    let world_uuid = rx.blocking_recv().ok()?;
+    // Inline on the calling (Bukkit) thread: a WorldInitEvent handler that calls back into the
+    // JVM must not wait for this thread, which would be blocked on a spawned task.
+    let _rt = ctx.runtime.enter();
+    let world_uuid = super::world_ids::bukkit_uuid(&server.create_world(name.clone(), dim));
     Some(CreateWorldResponse {
         world_uuid: Some(ProtoUuid {
             value: world_uuid.to_string(),

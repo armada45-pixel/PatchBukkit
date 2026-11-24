@@ -1,5 +1,7 @@
 package org.patchbukkit.bootstrap;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Level;
@@ -15,6 +17,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.ServerTickRateManager;
 import net.minecraft.server.dedicated.DedicatedServer;
 import org.bukkit.GameMode;
+import org.bukkit.NamespacedKey;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
@@ -27,6 +30,7 @@ import patchbukkit.common.EmptyRequest;
 import patchbukkit.server.BanEntryProto;
 import patchbukkit.server.BroadcastMessageRequest;
 import patchbukkit.server.CreateWorldRequest;
+import patchbukkit.server.CreateWorldResponse;
 import patchbukkit.server.GetBanListRequest;
 import patchbukkit.server.GetBanListResponse;
 import patchbukkit.server.GetOperatorsResponse;
@@ -115,6 +119,9 @@ public final class ServerBridge {
                     ))
                     .visit(Advice.to(OnCreateWorldAdvice.class).on(
                         ElementMatchers.named("createWorld").and(ElementMatchers.takesArguments(WorldCreator.class))
+                    ))
+                    .visit(Advice.to(OnGetLevelDirectoryAdvice.class).on(
+                        ElementMatchers.named("getLevelDirectory").and(ElementMatchers.takesNoArguments())
                     ))
                     .visit(Advice.to(OnUnloadWorldAdvice.class).on(
                         ElementMatchers.named("unloadWorld").and(ElementMatchers.takesArguments(World.class, boolean.class))
@@ -499,26 +506,66 @@ public final class ServerBridge {
         }
     }
 
-    public static void pushCreateWorldToPumpkin(WorldCreator creator) {
-        if (creator == null || !NativeFastPathFfi.isInitialized() || SYNCING.get()) return;
+    /**
+     * Loads a world requested through {@code Bukkit.createWorld} (Multiverse, for example) in Pumpkin
+     * from Paper's folder {@code <level>/dimensions/<namespace>/<key>}, and gives Bukkit a level backed
+     * by it. Returns null to let Paper create the world itself (not connected yet, or on failure).
+     */
+    public static World createWorldInPumpkin(CraftServer server, WorldCreator creator) {
+        if (creator == null || !NativeFastPathFfi.isInitialized() || SYNCING.get()) return null;
+        World existing = server.getWorld(creator.name());
+        if (existing != null) return existing;
         SYNCING.set(true);
         try {
+            NamespacedKey key = creator.key();
+            String folder = "dimensions/" + key.getNamespace() + "/" + key.getKey();
             String dim = switch (creator.environment()) {
                 case NETHER -> "minecraft:the_nether";
                 case THE_END -> "minecraft:the_end";
                 default -> "minecraft:overworld";
             };
-            NativeBridgeFfi.createWorld(
+            linkLegacyDimensionFolder(server.getLevelDirectory().resolve(folder), creator.environment());
+            CreateWorldResponse res = NativeBridgeFfi.createWorld(
                 CreateWorldRequest.newBuilder()
-                    .setName(creator.name())
+                    .setName(folder)
                     .setDimension(dim)
                     .setSeed(creator.seed())
                     .build()
             );
-        } catch (Throwable ignored) {
+            if (res == null || !res.getSuccess()) return null;
+            UUID uuid = UUID.fromString(res.getWorldUuid().getValue());
+            return PumpkinDedicatedServer.createCustomLevel(server.getServer(), creator.name(), uuid, creator.environment(), key);
+        } catch (Throwable t) {
+            LOGGER.log(Level.WARNING, "[PatchBukkit] Failed to load world '" + creator.name() + "' in Pumpkin", t);
+            return null;
         } finally {
             SYNCING.set(false);
         }
+    }
+
+    /**
+     * Pumpkin opens a nether or end world only from {@code <root>/DIM-1} or {@code <root>/DIM1} (or its own
+     * layout), while Paper keeps a custom nether or end directly in {@code dimensions/<ns>/<key>}.
+     * A link from that folder to itself lets Pumpkin read Paper's chunks.
+     */
+    static void linkLegacyDimensionFolder(Path folder, World.Environment env) throws java.io.IOException {
+        String link = switch (env) {
+            case NETHER -> "DIM-1";
+            case THE_END -> "DIM1";
+            default -> null;
+        };
+        if (link == null || !Files.isDirectory(folder.resolve("region"))) return;
+        Path linkPath = folder.resolve(link);
+        if (!Files.exists(linkPath, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            Files.createSymbolicLink(linkPath, Path.of("."));
+        }
+    }
+
+    /** Pumpkin's world folder (in the server's working directory), so plugins find the real worlds. */
+    public static Path pumpkinLevelDirectory(Path paperDir) {
+        if (paperDir == null || !NativeFastPathFfi.isInitialized()) return paperDir;
+        Path pumpkinDir = Path.of(paperDir.getFileName().toString()).toAbsolutePath();
+        return Files.isDirectory(pumpkinDir) ? pumpkinDir : paperDir;
     }
 
     public static void pushUnloadWorldToPumpkin(World world, boolean save) {
@@ -660,9 +707,21 @@ public final class ServerBridge {
     }
 
     public static final class OnCreateWorldAdvice {
-        @Advice.OnMethodEnter
-        public static void onEnter(@Advice.Argument(0) WorldCreator creator) {
-            ServerBridge.pushCreateWorldToPumpkin(creator);
+        @Advice.OnMethodEnter(skipOn = Advice.OnNonDefaultValue.class)
+        public static World onEnter(@Advice.This CraftServer server, @Advice.Argument(0) WorldCreator creator) {
+            return ServerBridge.createWorldInPumpkin(server, creator);
+        }
+
+        @Advice.OnMethodExit
+        public static void onExit(@Advice.Enter World created, @Advice.Return(readOnly = false) World world) {
+            if (created != null) world = created;
+        }
+    }
+
+    public static final class OnGetLevelDirectoryAdvice {
+        @Advice.OnMethodExit
+        public static void onExit(@Advice.Return(readOnly = false) Path dir) {
+            dir = ServerBridge.pumpkinLevelDirectory(dir);
         }
     }
 
