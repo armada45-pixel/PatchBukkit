@@ -107,7 +107,7 @@ pub extern "C" fn ffi_fast_get_block_state_id(
     let worlds = ctx.plugin_context.server.worlds.load();
     let Some(world) = worlds
         .iter()
-        .find(|w| w.uuid == world_uuid)
+        .find(|w| super::world_ids::is_world(w, world_uuid))
         .or_else(|| worlds.first())
     else {
         return -1;
@@ -139,7 +139,7 @@ pub extern "C" fn ffi_fast_set_block_state_id(
     let worlds = ctx.plugin_context.server.worlds.load();
     let Some(world) = worlds
         .iter()
-        .find(|w| w.uuid == world_uuid)
+        .find(|w| super::world_ids::is_world(w, world_uuid))
         .or_else(|| worlds.first())
     else {
         return 0;
@@ -191,7 +191,7 @@ pub extern "C" fn ffi_fast_teleport_entity(
                 .worlds
                 .load()
                 .iter()
-                .find(|w| w.uuid == world_uuid)
+                .find(|w| super::world_ids::is_world(w, world_uuid))
                 .cloned()
                 .unwrap_or_else(|| player.living_entity.entity.world.load_full())
         } else {
@@ -358,7 +358,7 @@ pub extern "C" fn ffi_fast_load_chunk(
     let worlds = ctx.plugin_context.server.worlds.load();
     let Some(world) = worlds
         .iter()
-        .find(|w| w.uuid == world_uuid)
+        .find(|w| super::world_ids::is_world(w, world_uuid))
         .or_else(|| worlds.first())
     else {
         return 0;
@@ -395,7 +395,7 @@ pub extern "C" fn ffi_fast_is_chunk_generated(
     let worlds = ctx.plugin_context.server.worlds.load();
     let Some(world) = worlds
         .iter()
-        .find(|w| w.uuid == world_uuid)
+        .find(|w| super::world_ids::is_world(w, world_uuid))
         .or_else(|| worlds.first())
     else {
         return 0;

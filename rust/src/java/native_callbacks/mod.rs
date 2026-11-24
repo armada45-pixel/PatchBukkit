@@ -29,6 +29,8 @@ pub use sound::*;
 
 pub mod utils;
 
+pub mod world_ids;
+
 pub mod log;
 pub use log::*;
 

@@ -450,7 +450,7 @@ pub fn ffi_native_bridge_create_world_impl(
     let (tx, rx) = tokio::sync::oneshot::channel();
     ctx.runtime.spawn(async move {
         let world = server.create_world(world_name, dim);
-        let _ = tx.send(world.uuid);
+        let _ = tx.send(super::world_ids::bukkit_uuid(&world));
     });
 
     let world_uuid = rx.blocking_recv().ok()?;

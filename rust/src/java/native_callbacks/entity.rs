@@ -767,7 +767,7 @@ pub fn ffi_native_bridge_get_respawn_point_impl(
                         z: pt.position.0.z as f64,
                     },
                     pt.yaw,
-                    player.world().uuid.to_string(),
+                    super::world_ids::bukkit_uuid(&player.world()).to_string(),
                 ),
                 None => {
                     let info = player.world().level_info.load();
@@ -778,7 +778,7 @@ pub fn ffi_native_bridge_get_respawn_point_impl(
                             z: info.spawn_z as f64,
                         },
                         info.spawn_yaw,
-                        player.world().uuid.to_string(),
+                        super::world_ids::bukkit_uuid(&player.world()).to_string(),
                     )
                 }
             }
@@ -791,7 +791,7 @@ pub fn ffi_native_bridge_get_respawn_point_impl(
                     z: info.spawn_z as f64,
                 },
                 info.spawn_yaw,
-                player.world().uuid.to_string(),
+                super::world_ids::bukkit_uuid(&player.world()).to_string(),
             )
         };
         crate::proto::patchbukkit::common::Location {

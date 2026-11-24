@@ -51,7 +51,11 @@ impl SuggestionProvider for JavaSuggestionProvider {
             };
 
             Some(Location::new(
-                world.uuid, position.x, position.y, position.z, rotation,
+                crate::java::native_callbacks::world_ids::bukkit_uuid(world),
+                position.x,
+                position.y,
+                position.z,
+                rotation,
             ))
         } else {
             None

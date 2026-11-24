@@ -65,7 +65,7 @@ fn find_world(world_uuid_proto: Option<&ProtoUuid>) -> Option<Arc<pumpkin::world
     let worlds = ctx.plugin_context.server.worlds.load();
     worlds
         .iter()
-        .find(|w| w.uuid == world_uuid)
+        .find(|w| super::world_ids::is_world(w, world_uuid))
         .cloned()
         .or_else(|| worlds.first().cloned())
 }
@@ -210,7 +210,7 @@ pub fn ffi_native_bridge_get_worlds_impl(_request: EmptyRequest) -> Option<GetWo
     let world_uuids = worlds
         .iter()
         .map(|w| ProtoUuid {
-            value: w.uuid.to_string(),
+            value: super::world_ids::bukkit_uuid(w).to_string(),
         })
         .collect();
 
