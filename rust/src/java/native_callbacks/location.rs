@@ -14,7 +14,7 @@ pub fn ffi_native_bridge_get_location_impl(entity_uuid: Uuid) -> Option<Location
     if let Some(loc) = with_player(Some(&entity_uuid), |player| {
         let base = &player.living_entity.entity;
         let position = base.pos.load();
-        let world = base.world.load().uuid;
+        let world = super::world_ids::bukkit_uuid(&base.world.load());
         let yaw = base.yaw.load();
         let pitch = base.pitch.load();
         Location {
@@ -48,7 +48,7 @@ pub fn ffi_native_bridge_get_location_impl(entity_uuid: Uuid) -> Option<Location
 
     let entity = entity.get_entity();
     let position = entity.pos.load();
-    let world = entity.world.load().uuid;
+    let world = super::world_ids::bukkit_uuid(&entity.world.load());
     let yaw = entity.yaw.load();
     let pitch = entity.pitch.load();
 
