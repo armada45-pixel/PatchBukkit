@@ -325,6 +325,25 @@ public final class NativeFastPathFfi {
         }
     }
 
+    /** Writes Pumpkin's live position and rotation into {@code loc} without touching the NMS entity (safe off the main thread). */
+    public static boolean fillLiveLocation(UUID entityUuid, org.bukkit.Location loc) {
+        MethodHandle h = syncEntityStateHandle;
+        if (h == null || entityUuid == null || loc == null) return false;
+        try {
+            MemorySegment seg = ENTITY_STATE_BUF.get();
+            int res = (int) h.invokeExact(entityUuid.getMostSignificantBits(), entityUuid.getLeastSignificantBits(), seg);
+            if (res == 0) return false;
+            loc.setX(seg.getAtIndex(ValueLayout.JAVA_DOUBLE, 0));
+            loc.setY(seg.getAtIndex(ValueLayout.JAVA_DOUBLE, 1));
+            loc.setZ(seg.getAtIndex(ValueLayout.JAVA_DOUBLE, 2));
+            loc.setYaw(org.bukkit.Location.normalizeYaw((float) seg.getAtIndex(ValueLayout.JAVA_DOUBLE, 6)));
+            loc.setPitch((float) seg.getAtIndex(ValueLayout.JAVA_DOUBLE, 7));
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     /**
      * Synchronizes an NMS {@link net.minecraft.world.entity.Entity}'s position, rotation, and velocity
      * from Pumpkin's live entity state using a thread-local 64-byte native buffer (zero heap allocation).

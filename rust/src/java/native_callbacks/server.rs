@@ -449,7 +449,9 @@ pub fn ffi_native_bridge_create_world_impl(
     // Inline on the calling (Bukkit) thread: a WorldInitEvent handler that calls back into the
     // JVM must not wait for this thread, which would be blocked on a spawned task.
     let _rt = ctx.runtime.enter();
+    let old_worlds = server.worlds.load_full();
     let world_uuid = super::world_ids::bukkit_uuid(&server.create_world(name.clone(), dim));
+    super::utils::keep_alive_after_swap(old_worlds);
     Some(CreateWorldResponse {
         world_uuid: Some(ProtoUuid {
             value: world_uuid.to_string(),
@@ -466,8 +468,10 @@ pub fn ffi_native_bridge_unload_world_impl(
     let server = ctx.plugin_context.server.clone();
     let name = request.world_name;
     let (tx, rx) = tokio::sync::oneshot::channel();
+    let old_worlds = server.worlds.load_full();
     ctx.runtime.spawn(async move {
         let res = server.unload_world(&name).await;
+        super::utils::keep_alive_after_swap(old_worlds);
         let _ = tx.send(res.is_ok());
     });
     let success = rx.blocking_recv().unwrap_or(false);

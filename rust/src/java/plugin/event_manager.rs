@@ -31,6 +31,13 @@ thread_local! {
 /// `PatchBukkitEventFactory`, resolved once at JVM start. Looking it up by name on every event fails
 /// when the event fires inside a Java upcall, where JNI uses the JDK's own class loader.
 static EVENT_FACTORY: OnceLock<Global<JClass<'static>>> = OnceLock::new();
+/// `VirtualChannelManager`, cached for the same reason.
+static CHANNEL_MANAGER: OnceLock<Global<JClass<'static>>> = OnceLock::new();
+
+/// Entity ID of each player's session that has left. Events still in flight for it (a teleport finishing
+/// after the quit) must not register the player in Paper again, or a ghost stays online there.
+// shortcut: one entry per player who ever left (removed on rejoin), fine for a small server; prune by age if it grows.
+static LEFT_SESSIONS: LazyLock<Mutex<HashMap<uuid::Uuid, i32>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub struct EventManager;
 
@@ -61,6 +68,8 @@ impl EventManager {
             "org/patchbukkit/events/PatchBukkitEventFactory"
         ))?;
         let _ = EVENT_FACTORY.set(env.new_global_ref(class)?);
+        let class = env.find_class(jni::jni_str!("org/patchbukkit/network/VirtualChannelManager"))?;
+        let _ = CHANNEL_MANAGER.set(env.new_global_ref(class)?);
         Ok(())
     }
 
@@ -89,6 +98,17 @@ impl EventManager {
             && let Ok(mut map) = REGISTERED_PLAYERS.lock()
         {
             map.remove(&uuid);
+            if let Some(player) = payload.context.player.as_ref() {
+                LEFT_SESSIONS
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(uuid, player.living_entity.entity.entity_id);
+            }
+            // A bridged teleport whose Pumpkin event never fired must not hide a later one to the same spot.
+            crate::java::native_callbacks::fast_path::BRIDGED_TELEPORTS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .retain(|(id, _)| *id != uuid);
         }
 
         // Panama FFM upcall fast-path for high-frequency network packets (`PacketReceived` / `PacketSent`).
@@ -238,6 +258,13 @@ impl EventManager {
             if map.get(&uuid) == Some(&(entity_id, is_op)) {
                 return Ok(());
             }
+            {
+                let mut left = LEFT_SESSIONS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                if left.get(&uuid) == Some(&entity_id) {
+                    return Ok(());
+                }
+                left.remove(&uuid);
+            }
             // Insert before calling JNI so any re-entrant event for the same player
             // during channel injection does not recursively call `register_player_raw`.
             map.insert(uuid, (entity_id, is_op));
@@ -277,8 +304,11 @@ impl EventManager {
         let uuid_jstr = env.new_string(player.gameprofile.id.to_string())?;
         let name_jstr = env.new_string(&player.gameprofile.name)?;
 
+        let manager = CHANNEL_MANAGER
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("VirtualChannelManager is not cached yet"))?;
         if let Err(e) = env.call_static_method(
-            jni::jni_str!("org/patchbukkit/network/VirtualChannelManager"),
+            manager,
             jni::jni_str!("registerPlayer"),
             jni::jni_sig!("(Ljava/lang/String;Ljava/lang/String;ZI)V"),
             &[

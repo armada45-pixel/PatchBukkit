@@ -3101,6 +3101,11 @@ impl_cancellable_event!(
 );
 
 impl PatchBukkitEvent for pumpkin::plugin::player::player_teleport::PlayerTeleportEvent {
+    fn should_dispatch(&self) -> bool {
+        // Teleports started by a Bukkit plugin already fired Paper's own PlayerTeleportEvent.
+        !crate::java::native_callbacks::fast_path::take_bridged_teleport(self.player.gameprofile.id, self.to)
+    }
+
     fn to_payload(&self, server: Arc<Server>) -> JvmEventPayload {
         JvmEventPayload {
             event: Event {

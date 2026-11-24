@@ -295,10 +295,8 @@ public final class CommandBridge {
         if (clean.startsWith("minecraft:") || clean.startsWith("bukkit:") || clean.startsWith("spigot:") || clean.startsWith("paper:")) {
             return;
         }
+        // Namespaced labels (essentials:give) are mirrored as their own commands, like on Paper.
         String targetName = clean;
-        if (clean.contains(":")) {
-            return;
-        }
         if (!REGISTERED_COMMANDS.add(targetName)) return;
         if (aliases != null) {
             for (String alias : aliases) {

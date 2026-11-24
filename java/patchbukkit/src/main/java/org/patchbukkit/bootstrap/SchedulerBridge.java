@@ -52,6 +52,13 @@ public final class SchedulerBridge {
         heartbeat();
     }
 
+    private static final java.util.concurrent.ConcurrentLinkedQueue<Runnable> MAIN_THREAD_TASKS = new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+    /** Runs {@code task} on the main thread during the next heartbeat. */
+    public static void runOnMainThread(Runnable task) {
+        MAIN_THREAD_TASKS.add(task);
+    }
+
     /**
      * Executes one tick of the Paper scheduler on the calling (main) thread.
      */
@@ -64,6 +71,16 @@ public final class SchedulerBridge {
             if (server != null && server.server != null) {
                 net.minecraft.server.MinecraftServer.currentTick++;
                 CraftServer craftServer = server.server;
+                // Only what was queued before this tick, so other threads cannot stretch it.
+                for (int n = MAIN_THREAD_TASKS.size(); n > 0; n--) {
+                    Runnable task = MAIN_THREAD_TASKS.poll();
+                    if (task == null) break;
+                    try {
+                        task.run();
+                    } catch (Throwable t) {
+                        LOGGER.log(Level.WARNING, "Main thread task failed", t);
+                    }
+                }
                 if (craftServer.getScheduler() instanceof CraftScheduler scheduler) {
                     scheduler.mainThreadHeartbeat();
                 }

@@ -108,6 +108,9 @@ public final class EntityBridge {
                         ElementMatchers.named("getLocation")
                             .or(ElementMatchers.named("getVelocity").and(ElementMatchers.takesNoArguments()))
                     ))
+                    .visit(Advice.to(OnLiveLocationAdvice.class).on(
+                        ElementMatchers.named("getLocation").and(ElementMatchers.takesNoArguments()).and(ElementMatchers.returns(Location.class))
+                    ))
                     .visit(Advice.to(OnIsOnGroundAdvice.class).on(
                         ElementMatchers.named("isOnGround").and(ElementMatchers.takesNoArguments())
                     ))
@@ -286,8 +289,12 @@ public final class EntityBridge {
 
     public static void syncEntityStateFromPumpkin(CraftEntity craftEntity) {
         if (craftEntity == null || !NativeFastPathFfi.isInitialized()) return;
+        // Moving an NMS entity off the main thread races Paper's entity sections ("Refusing to update position");
+        // async getLocation callers get Pumpkin's live position in the returned copy instead (OnLiveLocationAdvice).
+        if (!org.bukkit.Bukkit.isPrimaryThread()) return;
         Entity handle = craftEntity.getHandle();
-        if (handle == null) return;
+        // Re-entered from an event fired while Paper moves the entity between sections (a teleport closing a menu).
+        if (handle == null || handle.moonrise$isUpdatingSectionStatus()) return;
         if (!NativeFastPathFfi.syncNmsEntityState(handle)) {
             try {
                 patchbukkit.common.UUID protoUuid = BridgeUtils.convertUuid(handle.getUUID());
@@ -418,6 +425,14 @@ public final class EntityBridge {
      * runtime, so the future never completes. Pumpkin owns the chunks: teleport right away instead.
      */
     public static CompletableFuture<Boolean> teleportNow(CraftEntity entity, Location location, TeleportCause cause, TeleportFlag[] flags) {
+        // Plugins often call teleportAsync from a chunk-load callback off the main thread; Paper only teleports on it.
+        if (!org.bukkit.Bukkit.isPrimaryThread()) {
+            CompletableFuture<Boolean> done = new CompletableFuture<>();
+            SchedulerBridge.runOnMainThread(() -> teleportNow(entity, location, cause, flags).whenComplete((ok, err) -> {
+                if (err != null) done.completeExceptionally(err); else done.complete(ok);
+            }));
+            return done;
+        }
         try {
             return CompletableFuture.completedFuture(entity.teleport(location, cause, flags));
         } catch (Throwable t) {
@@ -461,6 +476,19 @@ public final class EntityBridge {
         public static void onEnter(@Advice.This CraftEntity craftEntity) {
             EntityBridge.syncEntityStateFromPumpkin(craftEntity);
         }
+    }
+
+    public static final class OnLiveLocationAdvice {
+        @Advice.OnMethodExit
+        public static void onExit(@Advice.This CraftEntity craftEntity, @Advice.Return Location location) {
+            EntityBridge.fillLiveLocationOffMain(craftEntity, location);
+        }
+    }
+
+    /** Off the main thread getLocation returns the NMS position last synced there; FancyNpcs' async tracker needs it live. */
+    public static void fillLiveLocationOffMain(CraftEntity craftEntity, Location location) {
+        if (craftEntity == null || location == null || org.bukkit.Bukkit.isPrimaryThread() || !NativeFastPathFfi.isInitialized()) return;
+        NativeFastPathFfi.fillLiveLocation(craftEntity.getUniqueId(), location);
     }
 
     public static final class OnIsOnGroundAdvice {

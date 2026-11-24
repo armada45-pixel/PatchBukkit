@@ -7,6 +7,18 @@ use std::sync::{Arc, RwLock};
 
 static PLAYER_HANDLE_CACHE: RwLock<Option<HashMap<uuid::Uuid, Arc<Player>>>> = RwLock::new(None);
 
+/// This plugin is its own Rust binary with its own copy of `arc-swap`, so a swap made from code
+/// compiled here cannot see Pumpkin's in-flight `load()` guards and may free a value Pumpkin is
+/// still reading (seen as a SIGSEGV in `World::flush_block_updates`). Take a reference to each old
+/// value before such a swap and pass it here: it is dropped 30 s later, after any reader is done.
+// shortcut: one sleeping thread per swap; fine for rare swaps (world create/unload, spawn, teleports), use a reaper queue if they get frequent.
+pub fn keep_alive_after_swap<T: Send + 'static>(old_values: T) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        drop(old_values);
+    });
+}
+
 #[must_use]
 pub fn get_string(str_ptr: *const c_char) -> String {
     unsafe { CStr::from_ptr(str_ptr).to_string_lossy().into_owned() }

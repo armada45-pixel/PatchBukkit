@@ -30,7 +30,7 @@ pub fn ffi_native_bridge_register_command_impl(request: RegisterCommandRequest) 
     );
 
     let cmd_clean = cmd_name.trim().trim_start_matches('/').trim().to_string();
-    if cmd_clean.is_empty() || cmd_clean.contains(':') {
+    if cmd_clean.is_empty() {
         return Some(());
     }
 

@@ -19,6 +19,8 @@ public final class VirtualChannelManager {
 
     private final Map<UUID, PatchBukkitVirtualChannel> channels = new ConcurrentHashMap<>();
     private final Map<UUID, net.minecraft.server.level.ServerPlayer> serverPlayers = new ConcurrentHashMap<>();
+    /** Players that quit. Events still in flight for them must not create a ServerPlayer (a ghost that stays online). */
+    private final java.util.Set<UUID> departed = ConcurrentHashMap.newKeySet();
 
     private static final java.util.concurrent.atomic.AtomicLong INBOUND_COUNT = new java.util.concurrent.atomic.AtomicLong();
     private static final java.util.concurrent.atomic.AtomicLong OUTBOUND_COUNT = new java.util.concurrent.atomic.AtomicLong();
@@ -40,6 +42,8 @@ public final class VirtualChannelManager {
     public static void registerPlayer(String uuidStr, String name, boolean isOp, int entityId) {
         try {
             UUID uuid = UUID.fromString(uuidStr);
+            // Rust registers a player when a session starts, so this is the one place a departed player comes back.
+            INSTANCE.departed.remove(uuid);
             net.minecraft.server.level.ServerPlayer sp =
                 INSTANCE.getOrCreateServerPlayer(uuid, name != null ? name : "Player", entityId);
             if (sp != null) {
@@ -63,6 +67,7 @@ public final class VirtualChannelManager {
     ) {
         if (uuid == null) return null;
         net.minecraft.server.level.ServerPlayer existing = serverPlayers.get(uuid);
+        if (existing == null && departed.contains(uuid)) return null;
         if (existing != null) {
             if (entityId > 0 && existing.getId() != entityId) {
                 existing.setId(entityId);
@@ -201,6 +206,9 @@ public final class VirtualChannelManager {
                 } catch (Throwable ignored) {}
             }
 
+            // Never added to a Paper level, so Paper's tracking callback never marks it valid; without this
+            // Player.isValid() is false and CraftEntity.teleport0 refuses every teleport.
+            serverPlayer.valid = true;
             serverPlayers.put(uuid, serverPlayer);
 
             // Trigger server channel accept handlers (e.g. PacketEvents ServerChannelHandler)
@@ -266,8 +274,10 @@ public final class VirtualChannelManager {
 
     public void removePlayer(UUID uuid) {
         if (uuid == null) return;
+        departed.add(uuid);
         PatchBukkitVirtualChannel channel = channels.remove(uuid);
         net.minecraft.server.level.ServerPlayer sp = serverPlayers.remove(uuid);
+        if (sp != null) sp.valid = false;
 
         if (sp != null && org.patchbukkit.bootstrap.HeadlessPaperServer.isBooted()) {
             net.minecraft.server.dedicated.DedicatedServer ds = org.patchbukkit.bootstrap.HeadlessPaperServer.get();
@@ -515,6 +525,10 @@ public final class VirtualChannelManager {
             if (channel.pipeline().get("encoder") != null) {
                 channel.pipeline().replace("encoder", "encoder", new net.minecraft.network.PacketEncoder<>(outboundProtocol));
             }
+            // A bundle has no packet ID of its own: like vanilla, split it into delimiter + packets before the encoder (FancyNpcs sends them).
+            if (channel.pipeline().get("bundle_packer") != null && outboundProtocol.bundlerInfo() != null) {
+                channel.pipeline().replace("bundle_packer", "bundle_packer", new net.minecraft.network.PacketBundleUnpacker(outboundProtocol.bundlerInfo()));
+            }
             if (channel.pipeline().get("packet_handler") != null && channel.pipeline().get("packet_handler") != connection) {
                 channel.pipeline().replace("packet_handler", "packet_handler", connection);
             }
@@ -706,7 +720,13 @@ public final class VirtualChannelManager {
                     net.minecraft.network.protocol.Packet<?> packet = protocol.codec().decode(buffer);
                     if (packet != null) {
                         io.netty.util.ReferenceCountUtil.release(buffer);
-                        io.netty.channel.ChannelFuture writeFuture = channel.writeAndFlush(packet);
+                        io.netty.channel.ChannelFuture writeFuture;
+                        channel.setForwardingFromPumpkin(true);
+                        try {
+                            writeFuture = channel.writeAndFlush(packet);
+                        } finally {
+                            channel.setForwardingFromPumpkin(false);
+                        }
                         if (writeFuture.cause() != null) {
                             LOGGER.log(Level.WARNING, "[VirtualChannelManager] Outbound write failed for 0x" + Integer.toHexString(packetId), writeFuture.cause());
                         }

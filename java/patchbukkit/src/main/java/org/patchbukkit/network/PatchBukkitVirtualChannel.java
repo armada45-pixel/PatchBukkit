@@ -32,6 +32,8 @@ public class PatchBukkitVirtualChannel extends EmbeddedChannel {
     private int compressionThreshold = 256;
     private boolean encrypted = false;
     private boolean suppressOutboundBridge = false;
+    // Per thread: EmbeddedChannel runs handlers on the writing thread, and Paper's main thread may write meanwhile.
+    private final ThreadLocal<Boolean> forwardingFromPumpkin = ThreadLocal.withInitial(() -> false);
     private int pipelineDepth = 0;
 
     public PatchBukkitVirtualChannel(UUID playerUuid) {
@@ -178,7 +180,7 @@ public class PatchBukkitVirtualChannel extends EmbeddedChannel {
     private static final java.util.Set<String> DEFAULT_HANDLER_NAMES = java.util.Set.of(
         "timeout", "legacy_query", "splitter", "decrypt", "decompress", "decoder",
         "prepender", "encrypt", "compress", "bridge_outbound", "encoder", "bundle_packer",
-        "packet_handler", "DefaultChannelPipeline$TailContext#0"
+        "packet_handler", "patchbukkit_paper_teleport_filter", "DefaultChannelPipeline$TailContext#0"
     );
 
     public static boolean isDefaultHandlerName(String name) {
@@ -204,6 +206,11 @@ public class PatchBukkitVirtualChannel extends EmbeddedChannel {
 
     public boolean isSuppressOutboundBridge() {
         return suppressOutboundBridge;
+    }
+
+    /** Set while a packet Pumpkin sent is replayed through this pipeline for packet-listening plugins. */
+    public void setForwardingFromPumpkin(boolean forwarding) {
+        this.forwardingFromPumpkin.set(forwarding);
     }
 
     private void setupPipeline() {
@@ -317,6 +324,20 @@ public class PatchBukkitVirtualChannel extends EmbeddedChannel {
                     LOGGER.log(java.util.logging.Level.WARNING,
                         "[PatchBukkitVirtualChannel] Exception in pipeline for " + playerUuid, cause);
                 }
+            }
+        });
+
+        // Pumpkin owns teleports: once a Paper teleport is bridged, Pumpkin sends the client its own
+        // position packet. A second one from Paper makes the client confirm a teleport id Pumpkin
+        // never issued, and Pumpkin kicks it ("Wrong teleport id").
+        pipeline().addLast("patchbukkit_paper_teleport_filter", new ChannelOutboundHandlerAdapter() {
+            @Override
+            public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
+                if (msg instanceof net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket && !forwardingFromPumpkin.get()) {
+                    promise.setSuccess();
+                    return;
+                }
+                ctx.write(msg, promise);
             }
         });
     }

@@ -47,6 +47,12 @@ impl EventHandler<PlayerLoginEvent> for JoinGate {
 pub async fn on_load_inner(plugin: &PatchBukkitPlugin, server: Arc<Context>) -> Result<(), String> {
     server.init_log();
     tracing::info!("Starting PatchBukkit");
+    // With two arc-swap debt lists (stock Pumpkin), a swap on one side can free what the other reads.
+    if arc_swap_list_shared() {
+        tracing::info!("arc-swap debt list shared with Pumpkin");
+    } else {
+        tracing::warn!("Pumpkin does not export PUMPKIN_ARC_SWAP_LIST_HEAD: arc-swap values can be freed while in use");
+    }
 
     let base = get_base_directory(&server)?;
     std::fs::create_dir_all(&base)
@@ -225,4 +231,30 @@ impl Default for PatchBukkitPlugin {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// True when the arc-swap list head every copy resolves lives outside this plugin (in Pumpkin).
+fn arc_swap_list_shared() -> bool {
+    use std::ffi::{c_char, c_int, c_void};
+    #[repr(C)]
+    struct DlInfo {
+        fname: *const c_char,
+        fbase: *mut c_void,
+        sname: *const c_char,
+        saddr: *mut c_void,
+    }
+    unsafe extern "C" {
+        fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+        fn dladdr(addr: *const c_void, info: *mut DlInfo) -> c_int;
+    }
+    let found = unsafe { dlsym(std::ptr::null_mut(), c"PUMPKIN_ARC_SWAP_LIST_HEAD".as_ptr()) };
+    if found.is_null() {
+        return false;
+    }
+    let base_of = |addr: *const c_void| {
+        let mut info = DlInfo { fname: std::ptr::null(), fbase: std::ptr::null_mut(), sname: std::ptr::null(), saddr: std::ptr::null_mut() };
+        (unsafe { dladdr(addr, &mut info) } != 0).then_some(info.fbase)
+    };
+    // dlsym can also return this plugin's own copy when the plugin was loaded RTLD_GLOBAL.
+    matches!((base_of(found), base_of(arc_swap_list_shared as *const c_void)), (Some(a), Some(b)) if a != b)
 }

@@ -19,7 +19,8 @@ pumpkin-config = { git = "https://github.com/Pumpkin-MC/Pumpkin.git", tag = "0.2
 pumpkin-nbt = { git = "https://github.com/Pumpkin-MC/Pumpkin.git", tag = "0.2.2+26.3-26.60", package = "pumpkin-nbt" }
 pumpkin-api-macros = { git = "https://github.com/Pumpkin-MC/Pumpkin.git", tag = "0.2.2+26.3-26.60", package = "pumpkin-api-macros" }
 
-tokio = "1"
+# The same features as the Pumpkin binary: runtime handles cross between the two copies, so the layouts must match.
+tokio = { version = "1", features = ["io-std", "signal"] }
 tracing = { version = "0.1.44", default-features = false, features = ["std", "attributes"] }
 jni = { version = "0.22.4", features = ["invocation"] }
 rust-embed = { version = "8.13.0", features = ["interpolate-folder-path"] }
@@ -78,3 +79,24 @@ all = { level = "deny", priority = -1 }
 multiple_crate_versions = "allow"
 unnecessary_fallible_conversions = "allow"
 not_unsafe_ptr_arg_deref = "allow" # Not sure about this one
+
+# Local only: one arc-swap debt list shared by Pumpkin and its plugins (see vendor/arc-swap).
+[patch.crates-io]
+arc-swap = { path = "../../vendor/arc-swap" }
+
+# local: build against the same Pumpkin source as the server binary (dev/Pumpkin), not the git tag.
+[patch."https://github.com/Pumpkin-MC/Pumpkin.git"]
+pumpkin-api-macros = { path = "../../Pumpkin/crates/pumpkin-api-macros" }
+pumpkin-auth = { path = "../../Pumpkin/crates/pumpkin-auth" }
+pumpkin-codecs = { path = "../../Pumpkin/crates/pumpkin-codecs" }
+pumpkin-command = { path = "../../Pumpkin/crates/pumpkin-command" }
+pumpkin-config = { path = "../../Pumpkin/crates/pumpkin-config" }
+pumpkin-core = { path = "../../Pumpkin/crates/pumpkin-core" }
+pumpkin-data = { path = "../../Pumpkin/crates/pumpkin-data" }
+pumpkin-gametest = { path = "../../Pumpkin/crates/pumpkin-gametest" }
+pumpkin-inventory = { path = "../../Pumpkin/crates/pumpkin-inventory" }
+pumpkin-macros = { path = "../../Pumpkin/crates/pumpkin-macros" }
+pumpkin-nbt = { path = "../../Pumpkin/crates/pumpkin-nbt" }
+pumpkin-protocol = { path = "../../Pumpkin/crates/pumpkin-protocol" }
+pumpkin-util = { path = "../../Pumpkin/crates/pumpkin-util" }
+pumpkin-world = { path = "../../Pumpkin/crates/pumpkin-world" }

@@ -402,6 +402,7 @@ public final class HeadlessPaperServer {
         removeShutdownHook();
 
         PumpkinDedicatedServer.initHeadless(server);
+        moveEntityIdsAbovePumpkin();
         SERVER = server;
         org.patchbukkit.log.LogBridge.init();
         installInertWatchdog();
@@ -445,6 +446,20 @@ public final class HeadlessPaperServer {
             (System.nanoTime() - start) / 1e9
         ));
         return server;
+    }
+
+    /**
+     * Paper and Pumpkin both count entity ids up from 1, so an entity a plugin creates in Paper (an NPC, a display)
+     * gets the id of a Pumpkin player and the client mixes the two up. Paper's ids start far above Pumpkin's instead.
+     */
+    private static void moveEntityIdsAbovePumpkin() {
+        try {
+            java.lang.reflect.Field field = net.minecraft.server.level.ServerLevel.class.getDeclaredField("ENTITY_COUNTER");
+            field.setAccessible(true);
+            ((java.util.concurrent.atomic.AtomicInteger) field.get(null)).updateAndGet(id -> Math.max(id, 1 << 30));
+        } catch (ReflectiveOperationException e) {
+            LOGGER.log(Level.WARNING, "[PatchBukkit] Could not move Paper entity ids above Pumpkin's", e);
+        }
     }
 
     /**

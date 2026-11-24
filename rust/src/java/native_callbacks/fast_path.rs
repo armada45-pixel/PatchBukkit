@@ -1,9 +1,21 @@
+use std::sync::Arc;
+
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use pumpkin::entity::EntityBase;
 use pumpkin_util::math::{position::BlockPos, vector2::Vector2, vector3::Vector3};
 
 use crate::java::native_callbacks::{CALLBACK_CONTEXT, utils::with_player_uuid};
+
+/// Teleports Paper already ran (and fired its event for), by player and destination. Pumpkin fires its
+/// own PlayerTeleportEvent for them, for a world change from a spawned task, so a thread-local cannot mark it.
+pub static BRIDGED_TELEPORTS: std::sync::Mutex<Vec<(uuid::Uuid, Vector3<f64>)>> = std::sync::Mutex::new(Vec::new());
+
+/// True (once) when Pumpkin's teleport of `player` to `to` is one Paper already handled.
+pub fn take_bridged_teleport(player: uuid::Uuid, to: Vector3<f64>) -> bool {
+    let mut list = BRIDGED_TELEPORTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    list.iter().position(|e| *e == (player, to)).map(|i| list.swap_remove(i)).is_some()
+}
 
 /// Whether any virtual Netty channel on the Java side has custom pipeline handlers
 /// (e.g. PacketEvents / ProtocolLib) that require forwarding inbound/outbound packets.
@@ -196,6 +208,23 @@ pub extern "C" fn ffi_fast_teleport_entity(
             player.living_entity.entity.world.load_full()
         };
         // The player's own teleport: it sends the client its new position and handles world changes.
+        let entity = &player.living_entity.entity;
+        let current_world = entity.world.load_full();
+        if !Arc::ptr_eq(&current_world, &target_world) {
+            // A world change swaps these from code compiled here (see keep_alive_after_swap).
+            super::utils::keep_alive_after_swap((
+                current_world.players.load_full(),
+                target_world.players.load_full(),
+                entity.current_biome.load_full(),
+                current_world,
+            ));
+        }
+        {
+            let mut list = BRIDGED_TELEPORTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Keep only this teleport for the player: an older one whose event never fired must not linger.
+            list.retain(|(id, _)| *id != player.gameprofile.id);
+            list.push((player.gameprofile.id, position));
+        }
         EntityBase::teleport(&*player, position, Some(yaw), Some(pitch), target_world);
     }) {
         return 1;
