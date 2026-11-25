@@ -53,6 +53,11 @@ pub async fn on_load_inner(plugin: &PatchBukkitPlugin, server: Arc<Context>) -> 
     } else {
         tracing::warn!("Pumpkin does not export PUMPKIN_ARC_SWAP_LIST_HEAD: arc-swap values can be freed while in use");
     }
+    // This library has its own copy of Pumpkin's entity id counter, also starting at 1: entities spawned from here
+    // (plugin entities mirrored from Paper) would reuse ids of Pumpkin's players. Move this copy far above them.
+    if pumpkin::entity::Entity::reserve_ids(0) < 1 << 29 {
+        pumpkin::entity::Entity::reserve_ids(1 << 29);
+    }
 
     let base = get_base_directory(&server)?;
     std::fs::create_dir_all(&base)

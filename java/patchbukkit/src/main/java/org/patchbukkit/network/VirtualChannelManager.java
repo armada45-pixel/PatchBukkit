@@ -70,7 +70,7 @@ public final class VirtualChannelManager {
         if (existing == null && departed.contains(uuid)) return null;
         if (existing != null) {
             if (entityId > 0 && existing.getId() != entityId) {
-                existing.setId(entityId);
+                org.patchbukkit.bootstrap.EntityBridge.changeId(existing, entityId);
                 PatchBukkitVirtualChannel ch = channels.get(uuid);
                 if (ch != null && org.patchbukkit.bootstrap.HeadlessPaperServer.isBooted()) {
                     ch.setSuppressOutboundBridge(true);
@@ -343,6 +343,15 @@ public final class VirtualChannelManager {
                         }
                     }
                 } catch (Throwable ignored) {}
+            }
+            // Vanilla's PlayerList.remove also takes the player out of its level; without this every quit left the
+            // old ServerPlayer there and the next join had to force-add a duplicate UUID.
+            try {
+                if (!sp.isRemoved()) {
+                    sp.level().removePlayerImmediately(sp, net.minecraft.world.entity.Entity.RemovalReason.UNLOADED_WITH_PLAYER);
+                }
+            } catch (Throwable t) {
+                LOGGER.log(Level.FINE, "[VirtualChannelManager] Could not remove " + uuid + " from its level", t);
             }
         }
 

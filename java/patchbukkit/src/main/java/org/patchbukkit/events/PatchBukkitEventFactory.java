@@ -1214,7 +1214,7 @@ public class PatchBukkitEventFactory {
                 if (org.patchbukkit.bootstrap.HeadlessPaperServer.isBooted()
                         && ev.getEntityId() > 0
                         && player instanceof org.bukkit.craftbukkit.entity.CraftPlayer cp) {
-                    cp.getHandle().setId(ev.getEntityId());
+                    org.patchbukkit.bootstrap.EntityBridge.changeId(cp.getHandle(), ev.getEntityId());
                 }
                 Component msg = parseJsonOrPlain(ev.getJoinMessage());
                 yield new org.bukkit.event.player.PlayerJoinEvent(player, msg);
@@ -2461,6 +2461,9 @@ public class PatchBukkitEventFactory {
                     }
                 } catch (Throwable ignored) {}
             }
+            Entity known = Bukkit.getPlayer(resolvedUuid);
+            if (known == null) known = Bukkit.getEntity(resolvedUuid);
+            if (known != null) return known;
             net.minecraft.server.level.ServerLevel overworld = org.patchbukkit.bootstrap.HeadlessPaperServer.get().overworld();
             if (overworld != null) {
                 net.minecraft.world.entity.Entity fallback =

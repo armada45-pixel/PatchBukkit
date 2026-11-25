@@ -81,6 +81,9 @@ public final class EntityBridge {
                 .redefine(EntityLookup.class)
                 .method(ElementMatchers.named("getEntityStatus").and(ElementMatchers.takesArguments(Entity.class)))
                 .intercept(MethodDelegation.to(EntityLookupInterceptor.class))
+                // Give the entity its Pumpkin id before Paper indexes it: Paper's lookup and chunk slices are keyed
+                // by id, so changing it later made Paper unable to remove the entity (GSit seats never went away).
+                .visit(Advice.to(OnAddEntityAdvice.class).on(ElementMatchers.named("addEntity").and(ElementMatchers.takesArguments(Entity.class, boolean.class, boolean.class))))
                 .make()
                 .load(EntityLookup.class.getClassLoader(), ClassReloadingStrategy.fromInstalledAgent());
 
@@ -95,6 +98,18 @@ public final class EntityBridge {
                     .load(callbacksClass.getClassLoader(), ClassReloadingStrategy.fromInstalledAgent());
             } catch (Throwable t) {
                 LOGGER.log(Level.WARNING, "[PatchBukkit] Failed to hook ServerLevel$EntityCallbacks", t);
+            }
+
+            // Riding changes on Paper entities: Pumpkin owns what clients see, so mount or dismount there too.
+            try {
+                byteBuddy
+                    .redefine(Entity.class)
+                    .visit(Advice.to(OnAddPassengerAdvice.class).on(ElementMatchers.named("addPassenger").and(ElementMatchers.takesArguments(Entity.class))))
+                    .visit(Advice.to(OnRemovePassengerAdvice.class).on(ElementMatchers.named("removePassenger").and(ElementMatchers.takesArguments(Entity.class, boolean.class))))
+                    .make()
+                    .load(Entity.class.getClassLoader(), ClassReloadingStrategy.fromInstalledAgent());
+            } catch (Throwable t) {
+                LOGGER.log(Level.WARNING, "[PatchBukkit] Failed to hook Entity passengers", t);
             }
 
             // 3. Intercept CraftEntity mutations (teleport and velocity) and live state queries (getLocation / getVelocity)
@@ -195,39 +210,90 @@ public final class EntityBridge {
         } catch (Throwable ignored) {}
     }
 
+    private static volatile java.lang.reflect.Field entityByIdField;
+
+    /**
+     * {@link Entity#setId} that keeps Paper's entity lookup and chunk slices, both keyed by id, consistent when the
+     * entity is already in a level. A bare setId there makes the entity unfindable by its new id and unremovable.
+     */
+    @SuppressWarnings("unchecked")
+    public static void changeId(Entity entity, int newId) {
+        int oldId = entity.getId();
+        if (oldId == newId) return;
+        EntityLookup lookup = entity.level() == null ? null : entity.level().moonrise$getEntityLookup();
+        if (lookup == null || lookup.get(entity.getUUID()) != entity) {
+            entity.setId(newId);
+            return;
+        }
+        try {
+            java.lang.reflect.Field f = entityByIdField;
+            if (f == null) {
+                f = EntityLookup.class.getDeclaredField("entityById");
+                f.setAccessible(true);
+                entityByIdField = f;
+            }
+            var byId = (ca.spottedleaf.concurrentutil.map.concurrent.ints.ConcurrentChainedInt2ReferenceHashTable<Entity>) f.get(lookup);
+            var slices = lookup.getChunk(entity.moonrise$getSectionX(), entity.moonrise$getSectionZ());
+            int sectionY = entity.moonrise$getSectionY();
+            boolean inSlices = slices != null && slices.removeEntity(entity, sectionY);
+            byId.remove(oldId, entity);
+            entity.setId(newId);
+            byId.put(newId, entity);
+            if (inSlices) slices.addEntity(entity, sectionY);
+        } catch (Throwable t) {
+            LOGGER.log(Level.WARNING, "[PatchBukkit] Could not re-key entity " + entity, t);
+            entity.setId(newId);
+        }
+    }
+
+    /** Spawns the Pumpkin copy of a new Paper entity and takes over its id. Runs before Paper indexes the entity. */
+    public static boolean mirrorNewEntity(Entity entity) {
+        if (entity instanceof ServerPlayer || MIRRORED_FROM_PUMPKIN.contains(entity.getUUID())) return false;
+        if (!(entity.level() instanceof ServerLevel serverLevel) || serverLevel.getWorld() == null) return false;
+        try {
+            Identifier key = BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType());
+            String typeName = (key != null) ? key.getPath().toUpperCase(Locale.ROOT) : "PIG";
+            SpawnWorldEntityRequest.Builder reqBuilder = SpawnWorldEntityRequest.newBuilder()
+                .setWorldUuid(BridgeUtils.convertUuid(serverLevel.getWorld().getUID()))
+                .setEntityType(typeName)
+                .setX(entity.getX())
+                .setY(entity.getY())
+                .setZ(entity.getZ())
+                .setYaw(entity.getYRot())
+                .setPitch(entity.getXRot())
+                .setEntityUuid(BridgeUtils.convertUuid(entity.getUUID()))
+                .setEntityId(entity.getId());
+            if (entity instanceof net.minecraft.world.entity.item.ItemEntity itemEntity) {
+                reqBuilder.setItemStack(InventoryBridge.nmsToProto(itemEntity.getItem()));
+            } else if (entity instanceof net.minecraft.world.entity.ExperienceOrb expOrb) {
+                reqBuilder.setExperience(expOrb.getValue());
+            }
+            SpawnWorldEntityResponse resp = NativeBridgeFfi.spawnWorldEntity(reqBuilder.build());
+            if (resp == null) return false;
+            if (resp.getEntityId() != 0) changeId(entity, resp.getEntityId());
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     public static void handleEntityAdded(Entity entity) {
         if (entity == null || entity instanceof ServerPlayer) return;
         UUID uuid = entity.getUUID();
         if (MIRRORED_FROM_PUMPKIN.remove(uuid)) return;
-
-        if (entity.level() instanceof ServerLevel serverLevel) {
-            UUID worldUuid = serverLevel.getWorld() != null ? serverLevel.getWorld().getUID() : null;
-            if (worldUuid != null) {
-                try {
-                    Identifier key = BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType());
-                    String typeName = (key != null) ? key.getPath().toUpperCase(Locale.ROOT) : "PIG";
-                    SpawnWorldEntityRequest.Builder reqBuilder = SpawnWorldEntityRequest.newBuilder()
-                        .setWorldUuid(BridgeUtils.convertUuid(worldUuid))
-                        .setEntityType(typeName)
-                        .setX(entity.getX())
-                        .setY(entity.getY())
-                        .setZ(entity.getZ())
-                        .setYaw(entity.getYRot())
-                        .setPitch(entity.getXRot())
-                        .setEntityUuid(BridgeUtils.convertUuid(uuid))
-                        .setEntityId(entity.getId());
-                    if (entity instanceof net.minecraft.world.entity.item.ItemEntity itemEntity) {
-                        reqBuilder.setItemStack(InventoryBridge.nmsToProto(itemEntity.getItem()));
-                    } else if (entity instanceof net.minecraft.world.entity.ExperienceOrb expOrb) {
-                        reqBuilder.setExperience(expOrb.getValue());
-                    }
-                    SpawnWorldEntityResponse resp = NativeBridgeFfi.spawnWorldEntity(reqBuilder.build());
-                    if (resp != null && resp.getEntityId() != 0 && resp.getEntityId() != entity.getId()) {
-                        entity.setId(resp.getEntityId());
-                    }
-                } catch (Throwable ignored) {}
+        try {
+            // shortcut: flags are copied once at spawn; a plugin changing them later is not mirrored yet.
+            int flags = (entity.isInvisible() ? 1 : 0) | (entity.isNoGravity() ? 2 : 0) | (entity.isSilent() ? 4 : 0);
+            // Tracking can end and start again (onTrackingEnd removed the Pumpkin copy): spawn it again then.
+            if (!NativeFastPathFfi.mirrorEntityState(uuid, flags, null, false)) {
+                if (!mirrorNewEntity(entity)) return;
+                NativeFastPathFfi.mirrorEntityState(uuid, flags, null, false);
             }
-        }
+            // Passengers mounted before the spawn (GSit seats) were sent to clients with an id they never saw.
+            for (Entity passenger : entity.getPassengers()) {
+                NativeFastPathFfi.mirrorEntityState(uuid, -1, passenger.getUUID(), true);
+            }
+        } catch (Throwable ignored) {}
     }
 
     public static void handleEntityRemoved(Entity entity) {
@@ -393,6 +459,22 @@ public final class EntityBridge {
         }
     }
 
+    public static final class OnAddEntityAdvice {
+        @Advice.OnMethodEnter
+        public static boolean onEnter(@Advice.Argument(0) Entity entity,
+                                      @Advice.FieldValue("entityByUUID") java.util.concurrent.ConcurrentHashMap<UUID, Entity> byUuid) {
+            // Paper refuses these; do not spawn a copy that would never be removed.
+            if (entity == null || entity.isRemoved() || byUuid.containsKey(entity.getUUID())) return false;
+            return EntityBridge.mirrorNewEntity(entity);
+        }
+
+        @Advice.OnMethodExit(onThrowable = Throwable.class)
+        public static void onExit(@Advice.Argument(0) Entity entity, @Advice.Enter boolean mirrored, @Advice.Return boolean added,
+                                  @Advice.Thrown Throwable thrown) {
+            if (mirrored && (!added || thrown != null)) EntityBridge.handleEntityRemoved(entity);
+        }
+    }
+
     public static final class OnTrackingStartAdvice {
         @Advice.OnMethodExit
         public static void onExit(@Advice.Argument(0) Entity entity) {
@@ -405,6 +487,28 @@ public final class EntityBridge {
         public static void onExit(@Advice.Argument(0) Entity entity) {
             EntityBridge.handleEntityRemoved(entity);
         }
+    }
+
+    public static final class OnAddPassengerAdvice {
+        @Advice.OnMethodExit
+        public static void onExit(@Advice.This Entity vehicle, @Advice.Argument(0) Entity passenger) {
+            EntityBridge.mirrorRiding(vehicle, passenger, true);
+        }
+    }
+
+    public static final class OnRemovePassengerAdvice {
+        @Advice.OnMethodExit
+        public static void onExit(@Advice.This Entity vehicle, @Advice.Argument(0) Entity passenger, @Advice.Return boolean removed) {
+            if (removed) EntityBridge.mirrorRiding(vehicle, passenger, false);
+        }
+    }
+
+    /** Mounts or dismounts on the Pumpkin side; a vehicle Pumpkin does not know yet is handled when it spawns. */
+    public static void mirrorRiding(Entity vehicle, Entity passenger, boolean mount) {
+        if (vehicle == null || passenger == null || vehicle instanceof ServerPlayer) return;
+        try {
+            NativeFastPathFfi.mirrorEntityState(vehicle.getUUID(), -1, passenger.getUUID(), mount);
+        } catch (Throwable ignored) {}
     }
 
     public static final class OnTeleportAdvice {

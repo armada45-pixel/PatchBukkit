@@ -46,6 +46,7 @@ public final class NativeFastPathFfi {
     private static MethodHandle sendRawPacketHandle;
     private static MethodHandle loadChunkHandle;
     private static MethodHandle isChunkGeneratedHandle;
+    private static MethodHandle mirrorEntityStateHandle;
 
     private NativeFastPathFfi() {}
 
@@ -59,7 +60,8 @@ public final class NativeFastPathFfi {
         long sendRawPacketAddr,
         long registerUpcallsAddr,
         long loadChunkAddr,
-        long isChunkGeneratedAddr
+        long isChunkGeneratedAddr,
+        long mirrorEntityStateAddr
     ) {
         try {
             getBlockStateIdHandle = LINKER.downcallHandle(
@@ -153,6 +155,18 @@ public final class NativeFastPathFfi {
                     ValueLayout.JAVA_LONG,
                     ValueLayout.JAVA_LONG,
                     ValueLayout.JAVA_INT,
+                    ValueLayout.JAVA_INT
+                )
+            );
+            mirrorEntityStateHandle = LINKER.downcallHandle(
+                MemorySegment.ofAddress(mirrorEntityStateAddr),
+                FunctionDescriptor.of(
+                    ValueLayout.JAVA_INT,
+                    ValueLayout.JAVA_LONG,
+                    ValueLayout.JAVA_LONG,
+                    ValueLayout.JAVA_INT,
+                    ValueLayout.JAVA_LONG,
+                    ValueLayout.JAVA_LONG,
                     ValueLayout.JAVA_INT
                 )
             );
@@ -285,6 +299,28 @@ public final class NativeFastPathFfi {
                 z,
                 yaw,
                 pitch
+            );
+            return res != 0;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * Copies flags of an entity Paper created onto its Pumpkin mirror ({@code flags} bit 0 invisible, bit 1 no gravity,
+     * bit 2 silent; negative leaves them) and, when {@code passenger} is not null, mounts or dismounts it there.
+     */
+    public static boolean mirrorEntityState(UUID entityUuid, int flags, UUID passenger, boolean mount) {
+        MethodHandle h = mirrorEntityStateHandle;
+        if (h == null || entityUuid == null) return false;
+        try {
+            int res = (int) h.invokeExact(
+                entityUuid.getMostSignificantBits(),
+                entityUuid.getLeastSignificantBits(),
+                flags,
+                passenger != null ? passenger.getMostSignificantBits() : 0L,
+                passenger != null ? passenger.getLeastSignificantBits() : 0L,
+                mount ? 1 : 0
             );
             return res != 0;
         } catch (Throwable t) {

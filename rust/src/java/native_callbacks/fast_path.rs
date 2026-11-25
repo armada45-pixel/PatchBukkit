@@ -245,6 +245,69 @@ pub extern "C" fn ffi_fast_teleport_entity(
     0
 }
 
+/// Copies Paper-side state of an entity Paper created (a GSit seat) onto its Pumpkin mirror, which is the one
+/// clients see: `flags` bit 0 invisible, bit 1 no gravity, bit 2 silent. When the passenger UUID is not nil, the
+/// passenger (a player or entity) is mounted on it (`mount` = 1) or dismounted (`mount` = 0).
+#[unsafe(no_mangle)]
+pub extern "C" fn ffi_fast_mirror_entity_state(
+    entity_msb: i64,
+    entity_lsb: i64,
+    flags: i32,
+    passenger_msb: i64,
+    passenger_lsb: i64,
+    mount: i32,
+) -> i32 {
+    let Some(ctx) = CALLBACK_CONTEXT.get() else {
+        return 0;
+    };
+    let entity_uuid = uuid::Uuid::from_u64_pair(entity_msb as u64, entity_lsb as u64);
+    let passenger_uuid = uuid::Uuid::from_u64_pair(passenger_msb as u64, passenger_lsb as u64);
+    let worlds = ctx.plugin_context.server.worlds.load();
+    let Some((world, vehicle)) = worlds
+        .iter()
+        .find_map(|w| w.get_entity_by_uuid(entity_uuid).map(|e| (w.clone(), e)))
+    else {
+        return 0;
+    };
+    let base = vehicle.get_entity();
+    if flags >= 0 {
+        base.set_invisible(flags & 1 != 0);
+        base.has_no_gravity.store(flags & 2 != 0, Ordering::Relaxed);
+        base.set_silent(flags & 4 != 0);
+    }
+    if passenger_uuid.is_nil() {
+        return 1;
+    }
+    let passenger: Option<Arc<dyn EntityBase>> = with_player_uuid(passenger_uuid, |p| p as Arc<dyn EntityBase>)
+        .or_else(|| world.get_entity_by_uuid(passenger_uuid));
+    let Some(passenger) = passenger else {
+        return 0;
+    };
+    let passenger_id = passenger.get_entity().entity_id;
+    let _enter = ctx.runtime.enter();
+    // Silent variants: Paper already fired the mount/dismount events for this change, and a Pumpkin event here would
+    // reach the same plugins a second time (and re-enter this function when they react to it).
+    if mount != 0 {
+        if !base.has_passenger(passenger_id) {
+            base.add_passenger_silently(vehicle.clone(), passenger);
+            let ids: Vec<pumpkin_protocol::VarInt> = base
+                .passengers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .map(|p| pumpkin_protocol::VarInt(p.get_entity().entity_id))
+                .collect();
+            world.broadcast_packet_all(&pumpkin_protocol::java::client::play::CSetPassengers::new(
+                pumpkin_protocol::VarInt(base.entity_id),
+                &ids,
+            ));
+        }
+    } else if base.has_passenger(passenger_id) {
+        base.remove_passenger_sync(passenger_id);
+    }
+    1
+}
+
 /// Fast-path FFI entrypoint to update an entity's or player's velocity by UUID (`msb`, `lsb`).
 #[unsafe(no_mangle)]
 pub extern "C" fn ffi_fast_set_entity_velocity(
@@ -472,11 +535,12 @@ pub fn initialize_fast_path_callbacks(env: &mut jni::Env) -> anyhow::Result<()> 
         jni::objects::JValue::Long(ffi_fast_register_upcalls as *const () as i64),
         jni::objects::JValue::Long(ffi_fast_load_chunk as *const () as i64),
         jni::objects::JValue::Long(ffi_fast_is_chunk_generated as *const () as i64),
+        jni::objects::JValue::Long(ffi_fast_mirror_entity_state as *const () as i64),
     ];
     if let Err(e) = env.call_static_method(
         jni::jni_str!("org/patchbukkit/bridge/NativeFastPathFfi"),
         jni::jni_str!("init"),
-        jni::jni_sig!("(JJJJJJJJJJ)V"),
+        jni::jni_sig!("(JJJJJJJJJJJ)V"),
         &args,
     ) {
         env.exception_describe();
