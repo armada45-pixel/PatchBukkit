@@ -79,6 +79,9 @@ public class PatchBukkitEventFactory {
                 } finally {
                     if (unhide != null) unhide.run();
                 }
+                // Before Pumpkin acts on the event (e.g. uses up the placed block), so the tick flush
+                // cannot later overwrite that with the stack a listener changed in place.
+                org.patchbukkit.bootstrap.InventoryBridge.flushInPlaceChanges();
                 if (event instanceof org.bukkit.event.player.PlayerQuitEvent pqe) {
                     org.patchbukkit.network.VirtualChannelManager.getInstance().removePlayer(pqe.getPlayer().getUniqueId());
                 } else if (event instanceof org.bukkit.event.player.PlayerLoginEvent

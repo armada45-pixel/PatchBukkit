@@ -58,6 +58,13 @@ public final class InventoryBridge {
 
     private static final Logger LOGGER = Logger.getLogger("PatchBukkit");
     private static final ThreadLocal<Boolean> SYNCING = ThreadLocal.withInitial(() -> false);
+    private static final EquipmentSlot[] EQUIPMENT_ORDER = {
+        EquipmentSlot.FEET, EquipmentSlot.LEGS, EquipmentSlot.CHEST, EquipmentSlot.HEAD, EquipmentSlot.OFFHAND
+    };
+    // Plugins also change stacks in place (ItemStack#setAmount on a stack from getContents()), which no setter hook
+    // sees. Keep what each inventory looked like when it was pulled from Pumpkin; the heartbeat pushes what changed.
+    private static final Map<Inventory, ItemStack[]> PULLED =
+        java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
 
     private InventoryBridge() {}
 
@@ -299,6 +306,10 @@ public final class InventoryBridge {
         UUID uuid = player.getUUID();
         if (uuid == null) return;
 
+        // Push in-place changes from the last pull first, or this pull would overwrite them.
+        ItemStack[] before = PULLED.remove(player.getInventory());
+        if (before != null) pushChangedSlots(player.getInventory(), before);
+
         SYNCING.set(true);
         try {
             GetPlayerInventoryResponse res = NativeBridgeFfi.getPlayerInventory(BridgeUtils.convertUuid(uuid));
@@ -331,6 +342,66 @@ public final class InventoryBridge {
             if (res.hasOffHand()) {
                 inv.equipment.set(EquipmentSlot.OFFHAND, protoToNms(res.getOffHand()));
             }
+            PULLED.put(inv, contents(inv, true));
+        } catch (Throwable ignored) {
+        } finally {
+            SYNCING.set(false);
+        }
+    }
+
+    /** Main slots 0-35, then feet, legs, chest, head, offhand (Pumpkin slots 36-40). */
+    private static ItemStack[] contents(Inventory inv, boolean copy) {
+        NonNullList<ItemStack> main = inv.getNonEquipmentItems();
+        int size = Math.min(36, main.size());
+        ItemStack[] out = new ItemStack[size + EQUIPMENT_ORDER.length];
+        for (int i = 0; i < size; i++) out[i] = copy ? main.get(i).copy() : main.get(i);
+        for (int i = 0; i < EQUIPMENT_ORDER.length; i++) {
+            ItemStack eq = inv.equipment.get(EQUIPMENT_ORDER[i]);
+            out[size + i] = copy ? eq.copy() : eq;
+        }
+        return out;
+    }
+
+    /** Pushes slots that plugins changed in place since the inventory was last pulled. Main thread, once per tick. */
+    public static void flushInPlaceChanges() {
+        if (PULLED.isEmpty() || !NativeFastPathFfi.isInitialized()) return;
+        Map<Inventory, ItemStack[]> pulled;
+        synchronized (PULLED) {
+            pulled = new java.util.HashMap<>(PULLED);
+            PULLED.clear();
+        }
+        pulled.forEach(InventoryBridge::pushChangedSlots);
+    }
+
+    private static void pushChangedSlots(Inventory inv, ItemStack[] before) {
+        ItemStack[] now = contents(inv, false);
+        if (inv.player == null || now.length != before.length) return;
+        int main = now.length - EQUIPMENT_ORDER.length;
+        for (int i = 0; i < now.length; i++) {
+            if (ItemStack.matches(before[i], now[i])) continue;
+            if (i < main) {
+                pushSlotToPumpkin(inv, i, now[i]);
+            } else {
+                pushEquipmentToPumpkin(inv, i, i - main, now[i]);
+            }
+        }
+    }
+
+    private static void pushEquipmentToPumpkin(Inventory inv, int slot, int equipmentIndex, ItemStack stack) {
+        UUID uuid = inv.player.getUUID();
+        if (uuid == null || SYNCING.get()) return;
+        int[] slotTypes = { 2, 3, 4, 5, 1 };
+        SYNCING.set(true);
+        try {
+            patchbukkit.common.UUID protoUuid = BridgeUtils.convertUuid(uuid);
+            patchbukkit.itemstack.ItemStack protoItem = nmsToProto(stack);
+            NativeBridgeFfi.setPlayerInventorySlot(
+                SetPlayerInventorySlotRequest.newBuilder().setUuid(protoUuid).setSlot(slot).setItem(protoItem).build()
+            );
+            NativeBridgeFfi.setPlayerEquipment(
+                SetPlayerEquipmentRequest.newBuilder()
+                    .setUuid(protoUuid).setSlotType(slotTypes[equipmentIndex]).setItem(protoItem).build()
+            );
         } catch (Throwable ignored) {
         } finally {
             SYNCING.set(false);

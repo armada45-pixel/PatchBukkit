@@ -111,6 +111,7 @@ public final class SchedulerBridge {
                     scheduler.mainThreadHeartbeat();
                 }
                 tickPaperSchedulers(server);
+                InventoryBridge.flushInPlaceChanges();
                 org.patchbukkit.network.VirtualChannelManager.getInstance().tickChannels();
                 org.patchbukkit.bootstrap.CommandBridge.checkAndSyncIfNeeded();
             }
