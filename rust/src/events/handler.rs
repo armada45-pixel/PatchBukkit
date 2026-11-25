@@ -4485,7 +4485,11 @@ where
         if let Some(response) =
             crate::java::jvm::worker::fire_event_direct(payload, self.plugin_name.clone())
         {
-            event.set_cancelled(response.cancelled);
+            // The Bukkit event starts uncancelled, so `false` means "not cancelled here": keep a
+            // cancel set by an earlier Pumpkin or Wasm plugin handler.
+            if response.cancelled {
+                event.set_cancelled(true);
+            }
             if let Some(event_data) = response.data.and_then(|d| d.data) {
                 let _ = event.apply_modifications(server, event_data);
             }
