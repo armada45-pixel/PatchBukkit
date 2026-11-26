@@ -701,7 +701,9 @@ public class PatchBukkitEventFactory {
             }
             case PREPARE_ANVIL -> {
                 var ev = event.getPrepareAnvil();
-                yield createGenericBukkitEvent("org.bukkit.event.inventory.PrepareAnvilEvent", ev);
+                Player player = ev.hasPlayerUuid() ? getPlayer(ev.getPlayerUuid().getValue()) : null;
+                if (player == null) yield null;
+                yield prepareAnvil(player, ev);
             }
             case PREPARE_GRINDSTONE -> {
                 var ev = event.getPrepareGrindstone();
@@ -1108,7 +1110,9 @@ public class PatchBukkitEventFactory {
                 var ev = event.getPlayerCommandSend();
                 Player player = ev.hasPlayerUuid() ? getPlayer(ev.getPlayerUuid().getValue()) : null;
                 if (player == null) yield null;
-                String msg = ev.getCommand().startsWith("/") ? ev.getCommand() : "/" + ev.getCommand();
+                // Pumpkin's command never holds the slash the player typed; a slash it starts with is part of the
+                // command (`//pos1` arrives as `/pos1`). The Rust side strips exactly this one slash off the reply.
+                String msg = "/" + ev.getCommand();
                 yield new org.bukkit.event.player.PlayerCommandPreprocessEvent(player, msg);
             }
             case PLAYER_CUSTOM_PAYLOAD -> {
@@ -1897,6 +1901,42 @@ public class PatchBukkitEventFactory {
         }
     }
 
+    /**
+     * Mirrors Pumpkin's anvil into an AnvilMenu that stays open in Paper (so a plugin can read the anvil a tick later
+     * and see an AnvilInventory in InventoryCloseEvent). The slots are filled directly: going through setItem would
+     * run Paper's own createResult and fire a second PrepareAnvilEvent.
+     */
+    private static org.bukkit.event.inventory.PrepareAnvilEvent prepareAnvil(
+            Player player, patchbukkit.events.PrepareAnvilEvent ev) {
+        var handle = ((org.bukkit.craftbukkit.entity.CraftPlayer) player).getHandle();
+        net.minecraft.world.inventory.AnvilMenu menu;
+        if (handle.containerMenu instanceof net.minecraft.world.inventory.AnvilMenu open) {
+            menu = open;
+        } else {
+            menu = new net.minecraft.world.inventory.AnvilMenu(handle.nextContainerCounter(), handle.getInventory());
+            menu.checkReachable = false;
+            handle.containerMenu.transferTo(menu, (org.bukkit.craftbukkit.entity.CraftPlayer) player);
+            handle.containerMenu = menu;
+        }
+        var input = (net.minecraft.world.SimpleContainer) menu.getSlot(0).container;
+        input.getItems().set(0, org.patchbukkit.bootstrap.InventoryBridge.protoToNms(ev.getFirstItem()));
+        input.getItems().set(1, org.patchbukkit.bootstrap.InventoryBridge.protoToNms(ev.getSecondItem()));
+        var result = org.patchbukkit.bootstrap.InventoryBridge.protoToNms(ev.getResultItem());
+        menu.getSlot(2).container.setItem(0, result);
+        try {
+            var name = net.minecraft.world.inventory.AnvilMenu.class.getDeclaredField("itemName");
+            name.setAccessible(true);
+            name.set(menu, ev.getRenameText().isEmpty() ? null : ev.getRenameText());
+        } catch (ReflectiveOperationException ignored) {
+            // The rename text is cosmetic for listeners; the event still fires without it.
+        }
+        var view = (org.bukkit.inventory.view.AnvilView) menu.getBukkitView();
+        view.setRepairCost(ev.getRepairCost());
+        if (ev.getMaximumRepairCost() > 0) view.setMaximumRepairCost(ev.getMaximumRepairCost());
+        return new org.bukkit.event.inventory.PrepareAnvilEvent(
+                view, org.bukkit.craftbukkit.inventory.CraftItemStack.asBukkitCopy(result));
+    }
+
     @NotNull
     public static byte[] toFireEventResponse(@NotNull org.bukkit.event.Event event) {
         try {
@@ -1908,6 +1948,12 @@ public class PatchBukkitEventFactory {
             FireEventResponse.Builder resp = FireEventResponse.newBuilder().setCancelled(cancelled);
 
             switch (event) {
+                case org.bukkit.event.inventory.PrepareAnvilEvent pae -> resp.setData(
+                    Event.newBuilder().setPrepareAnvil(
+                        patchbukkit.events.PrepareAnvilEvent.newBuilder()
+                            .setMaximumRepairCost(Math.max(1, pae.getView().getMaximumRepairCost()))
+                    )
+                );
                 case org.bukkit.event.block.BlockBreakEvent bbe -> resp.setData(
                     Event.newBuilder().setBlockBreak(
                         BlockBreakEvent.newBuilder()

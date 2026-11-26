@@ -2,6 +2,7 @@ syntax = "proto3";
 package patchbukkit.events;
 
 import "patchbukkit/common/types.proto";
+import "patchbukkit/itemstack.proto";
 
 option java_multiple_files = true;
 option java_package = "patchbukkit.events";
@@ -110,6 +111,11 @@ message PrepareAnvilEvent {
   patchbukkit.common.UUID player_uuid = 1;
   string rename_text = 2;
   uint32 repair_cost = 3;
+  patchbukkit.itemstack.ItemStack first_item = 4;
+  patchbukkit.itemstack.ItemStack second_item = 5;
+  patchbukkit.itemstack.ItemStack result_item = 6;
+  // The "Too Expensive!" limit: a handler's request going in (0 = none yet), the anvil's limit coming back.
+  uint32 maximum_repair_cost = 7;
 }
 
 message PrepareGrindstoneEvent {

@@ -25,7 +25,7 @@ use crate::{
     },
 };
 
-fn pumpkin_item_to_proto(stack: &PumpkinItemStack) -> ProtoItemStack {
+pub(crate) fn pumpkin_item_to_proto(stack: &PumpkinItemStack) -> ProtoItemStack {
     if stack.is_empty() {
         ProtoItemStack {
             r#type: "minecraft:air".to_string(),

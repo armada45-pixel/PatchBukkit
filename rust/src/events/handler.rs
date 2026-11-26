@@ -892,19 +892,39 @@ impl_cancellable_event!(
     )
 );
 
-impl_non_cancellable_event!(
-    pumpkin::plugin::inventory::prepare_anvil::PrepareAnvilEvent,
-    |self| (
-        Data::PrepareAnvil(PrepareAnvilEvent {
-            player_uuid: Some(Uuid {
-                value: self.player.gameprofile.id.to_string(),
-            }),
-            rename_text: self.rename_text.clone(),
-            repair_cost: self.repair_cost,
-        }),
-        Some(self.player.clone())
-    )
-);
+impl PatchBukkitEvent for pumpkin::plugin::inventory::prepare_anvil::PrepareAnvilEvent {
+    fn to_payload(&self, server: Arc<Server>) -> JvmEventPayload {
+        use crate::java::native_callbacks::itemstack::pumpkin_item_to_proto;
+        JvmEventPayload {
+            event: Event {
+                data: Some(Data::PrepareAnvil(PrepareAnvilEvent {
+                    player_uuid: Some(Uuid {
+                        value: self.player.gameprofile.id.to_string(),
+                    }),
+                    rename_text: self.rename_text.clone(),
+                    repair_cost: self.repair_cost,
+                    first_item: Some(pumpkin_item_to_proto(&self.first_input)),
+                    second_item: Some(pumpkin_item_to_proto(&self.second_input)),
+                    result_item: Some(pumpkin_item_to_proto(&self.result)),
+                    maximum_repair_cost: self.maximum_repair_cost.unwrap_or(0),
+                })),
+            },
+            context: EventContext {
+                server,
+                player: Some(self.player.clone()),
+            },
+        }
+    }
+
+    fn apply_modifications(&mut self, _server: &Arc<Server>, data: Data) -> Option<()> {
+        if let Data::PrepareAnvil(ev) = data
+            && ev.maximum_repair_cost > 0
+        {
+            self.maximum_repair_cost = Some(ev.maximum_repair_cost);
+        }
+        Some(())
+    }
+}
 
 impl_non_cancellable_event!(
     pumpkin::plugin::inventory::prepare_grindstone::PrepareGrindstoneEvent,
