@@ -40,6 +40,8 @@ public final class VirtualChannelManager {
      * Entrypoint invoked by Rust's {@code EventManager::register_player} over JNI.
      */
     public static void registerPlayer(String uuidStr, String name, boolean isOp, int entityId) {
+        // The join events run here: on a Pumpkin thread, plugins teleporting on join (Multiverse) hit AsyncCatcher.
+        Boolean prevThreadState = org.patchbukkit.bootstrap.HeadlessPaperServer.enterPrimaryThread();
         try {
             UUID uuid = UUID.fromString(uuidStr);
             // Rust registers a player when a session starts, so this is the one place a departed player comes back.
@@ -53,6 +55,8 @@ public final class VirtualChannelManager {
             }
         } catch (Throwable t) {
             LOGGER.log(Level.SEVERE, "Failed to register player: " + name, t);
+        } finally {
+            org.patchbukkit.bootstrap.HeadlessPaperServer.restoreThreadState(prevThreadState);
         }
     }
 
