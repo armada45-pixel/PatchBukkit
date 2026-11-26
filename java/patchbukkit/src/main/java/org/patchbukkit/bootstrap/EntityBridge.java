@@ -106,6 +106,9 @@ public final class EntityBridge {
                     .redefine(Entity.class)
                     .visit(Advice.to(OnAddPassengerAdvice.class).on(ElementMatchers.named("addPassenger").and(ElementMatchers.takesArguments(Entity.class))))
                     .visit(Advice.to(OnRemovePassengerAdvice.class).on(ElementMatchers.named("removePassenger").and(ElementMatchers.takesArguments(Entity.class, boolean.class))))
+                    // A plugin killing or discarding a mob (ClickMobs picking it up) must remove Pumpkin's copy too:
+                    // onTrackingEnd does that only for entities Paper tracked, which mirrored Pumpkin mobs never are.
+                    .visit(Advice.to(OnSetRemovedAdvice.class).on(ElementMatchers.named("setRemoved").and(ElementMatchers.takesArguments(2))))
                     .make()
                     .load(Entity.class.getClassLoader(), ClassReloadingStrategy.fromInstalledAgent());
             } catch (Throwable t) {
@@ -320,6 +323,7 @@ public final class EntityBridge {
 
     public static void handleEntityRemoved(Entity entity) {
         if (entity == null || entity instanceof ServerPlayer) return;
+        MIRRORED_FROM_PUMPKIN.remove(entity.getUUID());
         try {
             NativeBridgeFfi.removeEntity(BridgeUtils.convertUuid(entity.getUUID()));
         } catch (Throwable ignored) {}
@@ -515,6 +519,13 @@ public final class EntityBridge {
         @Advice.OnMethodExit
         public static void onExit(@Advice.This Entity vehicle, @Advice.Argument(0) Entity passenger) {
             EntityBridge.mirrorRiding(vehicle, passenger, true);
+        }
+    }
+
+    public static final class OnSetRemovedAdvice {
+        @Advice.OnMethodExit
+        public static void onExit(@Advice.This Entity entity, @Advice.Argument(0) Entity.RemovalReason reason) {
+            if (reason != null && reason.shouldDestroy()) EntityBridge.handleEntityRemoved(entity);
         }
     }
 
