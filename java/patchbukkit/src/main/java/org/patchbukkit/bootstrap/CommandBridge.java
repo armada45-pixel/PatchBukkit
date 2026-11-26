@@ -83,6 +83,18 @@ public final class CommandBridge {
             } catch (Throwable t) {
                 LOGGER.log(Level.FINE, "[PatchBukkit] BukkitBrigForwardingMap patching skipped", t);
             }
+            try {
+                remember(byteBuddy
+                    .redefine(net.minecraft.commands.Commands.class, currentBytes(net.minecraft.commands.Commands.class))
+                    .visit(Advice.to(SkipSendCommandsAdvice.class).on(
+                        ElementMatchers.named("sendCommands")
+                            .and(ElementMatchers.takesArguments(net.minecraft.server.level.ServerPlayer.class))
+                    ))
+                    .make())
+                    .load(net.minecraft.commands.Commands.class.getClassLoader(), ClassReloadingStrategy.fromInstalledAgent());
+            } catch (Throwable t) {
+                LOGGER.log(Level.WARNING, "[PatchBukkit] Commands.sendCommands patching failed", t);
+            }
             LOGGER.info("[PatchBukkit] Successfully patched PaperCommands, SimpleCommandMap, and CraftServer with ByteBuddy");
         } catch (Throwable t) {
             LOGGER.log(Level.WARNING, "[PatchBukkit] Failed to patch command managers", t);
@@ -140,6 +152,18 @@ public final class CommandBridge {
             if (command != null && label != null) {
                 CommandBridge.onSimpleCommandMapRegister(map, label, fallbackPrefix, command);
             }
+        }
+    }
+
+    /**
+     * Pumpkin sends players its own command tree. Paper's sendCommands builds a per-player tree copy on its async
+     * pool and queues the send on the server thread, which the headless server never drains: every call left one
+     * whole tree in the queue (lobby heap full after ~150 joins). Skip it.
+     */
+    public static class SkipSendCommandsAdvice {
+        @Advice.OnMethodEnter(skipOn = Advice.OnNonDefaultValue.class)
+        public static boolean onEnter() {
+            return true;
         }
     }
 
