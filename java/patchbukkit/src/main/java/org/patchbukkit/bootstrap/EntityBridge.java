@@ -207,7 +207,29 @@ public final class EntityBridge {
                     }
                 }
             }
-        } catch (Throwable ignored) {}
+        } catch (Throwable t) {
+            // Was swallowed silently, which hid that no Pumpkin entity was ever mirrored.
+            java.util.logging.Logger.getLogger("PatchBukkit").log(java.util.logging.Level.WARNING, "Mirroring Pumpkin entities failed", t);
+        }
+    }
+
+    /**
+     * The Bukkit entity for a Pumpkin entity UUID. Mobs Pumpkin spawned after the world loaded are not in Paper's
+     * level yet, so a miss mirrors the world's entities once more and looks again.
+     */
+    public static org.bukkit.entity.Entity findOrMirror(org.bukkit.World world, String uuidStr) {
+        UUID uuid;
+        try {
+            uuid = UUID.fromString(uuidStr);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        org.bukkit.entity.Entity found = org.bukkit.Bukkit.getEntity(uuid);
+        if (found == null && world instanceof org.bukkit.craftbukkit.CraftWorld craftWorld) {
+            syncEntitiesFromPumpkin(craftWorld.getHandle(), world.getUID());
+            found = org.bukkit.Bukkit.getEntity(uuid);
+        }
+        return found;
     }
 
     private static volatile java.lang.reflect.Field entityByIdField;

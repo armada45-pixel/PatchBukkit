@@ -268,8 +268,11 @@ pub fn ffi_native_bridge_register_event_impl(request: RegisterEventRequest) -> O
         "org.bukkit.event.player.PlayerHarvestBlockEvent" => pumpkin::plugin::player::player_harvest_block::PlayerHarvestBlockEvent,
         "org.bukkit.event.player.PlayerHideEntityEvent" => pumpkin::plugin::player::player_hide_entity::PlayerHideEntityEvent,
         "org.bukkit.event.player.PlayerInputEvent" => pumpkin::plugin::player::player_input::PlayerInputEvent,
-        "org.bukkit.event.player.PlayerInteractAtEntityEvent" => pumpkin::plugin::player::player_interact_at_entity::PlayerInteractAtEntityEvent,
-        "org.bukkit.event.player.PlayerInteractEntityEvent" => pumpkin::plugin::player::player_interact_entity_event::PlayerInteractEntityEvent,
+        // Since 26.1 one packet is sent per entity right-click and Paper answers it with one
+        // PlayerInteractAtEntityEvent, which shares PlayerInteractEntityEvent's HandlerList: both feed
+        // from Pumpkin's interact-entity event (its separate interact-at event would fire a duplicate).
+        "org.bukkit.event.player.PlayerInteractAtEntityEvent"
+        | "org.bukkit.event.player.PlayerInteractEntityEvent" => pumpkin::plugin::player::player_interact_entity_event::PlayerInteractEntityEvent,
         "org.bukkit.event.player.PlayerInteractEvent" => pumpkin::plugin::player::player_interact_event::PlayerInteractEvent,
         "org.bukkit.event.player.PlayerItemBreakEvent" => pumpkin::plugin::player::player_item_break::PlayerItemBreakEvent,
         "org.bukkit.event.player.PlayerItemConsumeEvent" => pumpkin::plugin::player::player_item_consume::PlayerItemConsumeEvent,

@@ -236,6 +236,7 @@ message PlayerInteractEntityEvent {
   double target_position_y = 5;
   double target_position_z = 6;
   bool sneaking = 7;
+  int32 hand = 8; // 0 main hand, 1 off hand
 }
 
 message PlayerInteractEvent {

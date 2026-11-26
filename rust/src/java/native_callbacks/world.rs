@@ -463,7 +463,8 @@ pub fn ffi_native_bridge_get_world_entities_impl(
             uuid: Some(ProtoUuid {
                 value: base.entity_uuid.to_string(),
             }),
-            entity_type: format!("{:?}", base.entity_type),
+            // The registry id ("cow"): Debug would print the whole EntityType struct, which Paper rejects.
+            entity_type: base.entity_type.resource_name.to_string(),
             x: pos.x,
             y: pos.y,
             z: pos.z,

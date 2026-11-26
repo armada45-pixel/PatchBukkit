@@ -1166,13 +1166,23 @@ public class PatchBukkitEventFactory {
                 var ev = event.getPlayerInput();
                 yield createGenericBukkitEvent("org.bukkit.event.player.PlayerInputEvent", ev);
             }
-            case PLAYER_INTERACT_AT_ENTITY -> {
-                var ev = event.getPlayerInteractAtEntity();
-                yield createGenericBukkitEvent("org.bukkit.event.player.PlayerInteractAtEntityEvent", ev);
-            }
+            // Bridged from PLAYER_INTERACT_ENTITY instead (see below): forwarding both would fire twice.
+            case PLAYER_INTERACT_AT_ENTITY -> null;
             case PLAYER_INTERACT_ENTITY -> {
                 var ev = event.getPlayerInteractEntity();
-                yield createGenericBukkitEvent("org.bukkit.event.player.PlayerInteractEntityEvent", ev);
+                // Attacks are damage events in Bukkit. Since 26.1 the client sends one interact packet per
+                // right-click (Pumpkin reports it as InteractAt) and Paper fires one PlayerInteractAtEntityEvent,
+                // which PlayerInteractEntityEvent listeners also receive (they share a HandlerList).
+                if ("Attack".equals(ev.getAction())) yield null;
+                Player player = getPlayer(ev.getPlayerUuid().getValue());
+                Entity target = player == null ? null
+                    : org.patchbukkit.bootstrap.EntityBridge.findOrMirror(player.getWorld(), ev.getTargetUuid().getValue());
+                if (target == null) yield null;
+                var hand = ev.getHand() == 1 ? org.bukkit.inventory.EquipmentSlot.OFF_HAND : org.bukkit.inventory.EquipmentSlot.HAND;
+                yield "InteractAt".equals(ev.getAction())
+                    ? new org.bukkit.event.player.PlayerInteractAtEntityEvent(player, target,
+                        new org.bukkit.util.Vector(ev.getTargetPositionX(), ev.getTargetPositionY(), ev.getTargetPositionZ()), hand)
+                    : new org.bukkit.event.player.PlayerInteractEntityEvent(player, target, hand);
             }
             case PLAYER_INTERACT -> {
                 var ev = event.getPlayerInteract();

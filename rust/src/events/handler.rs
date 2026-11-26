@@ -2420,12 +2420,15 @@ impl_cancellable_event!(
             player_uuid: Some(Uuid {
                 value: self.player.gameprofile.id.to_string(),
             }),
-            target_uuid: None,
+            target_uuid: Some(Uuid {
+                value: self.target.get_entity().entity_uuid.to_string(),
+            }),
             action: format!("{:?}", self.action),
             target_position_x: self.target_position.map(|p| p.x).unwrap_or(0.0),
             target_position_y: self.target_position.map(|p| p.y).unwrap_or(0.0),
             target_position_z: self.target_position.map(|p| p.z).unwrap_or(0.0),
             sneaking: self.sneaking,
+            hand: i32::from(self.hand == pumpkin_util::Hand::Left),
         }),
         Some(self.player.clone())
     )
