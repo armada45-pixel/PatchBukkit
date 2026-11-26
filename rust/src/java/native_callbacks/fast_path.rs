@@ -194,6 +194,10 @@ pub extern "C" fn ffi_fast_teleport_entity(
     let position = Vector3::new(x, y, z);
 
     if let Some(()) = with_player_uuid(entity_uuid, |player| {
+        // A closed session (quit handlers still read it) must not move: Paper would track it again as a ghost.
+        if player.client.closed() {
+            return;
+        }
         let target_world = if world_msb != 0 || world_lsb != 0 {
             let world_uuid = uuid::Uuid::from_u64_pair(world_msb as u64, world_lsb as u64);
             ctx.plugin_context

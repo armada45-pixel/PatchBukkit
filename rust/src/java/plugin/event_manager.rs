@@ -241,6 +241,11 @@ impl EventManager {
         player: &Arc<Player>,
         server: &Arc<Server>,
     ) -> Result<()> {
+        // A closed session never comes back in Paper: an event or packet still in flight after the quit
+        // (AuthMe gives op back on quit, which changes `is_op`) would register it again as a ghost.
+        if player.client.closed() {
+            return Ok(());
+        }
         let player_permission_level = player.permission_lvl.load();
         let is_op = player_permission_level > pumpkin_util::permission::PermissionLvl::Zero
             || server

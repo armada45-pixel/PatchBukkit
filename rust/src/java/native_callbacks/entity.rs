@@ -277,6 +277,10 @@ pub fn ffi_native_bridge_teleport_entity_impl(request: TeleportEntityRequest) ->
     let pitch = loc.pitch;
 
     if let Some(()) = with_player(request.uuid.as_ref(), |player| {
+        // A closed session (quit handlers still read it) must not move: Paper would track it again as a ghost.
+        if player.client.closed() {
+            return;
+        }
         let position = pumpkin_util::math::vector3::Vector3::new(pos.x, pos.y, pos.z);
         player.living_entity.entity.pos.store(position);
         player.living_entity.entity.yaw.store(yaw);
