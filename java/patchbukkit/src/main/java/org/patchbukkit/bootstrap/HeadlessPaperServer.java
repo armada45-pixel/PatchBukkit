@@ -131,6 +131,20 @@ public final class HeadlessPaperServer {
                     ClassReloadingStrategy.fromInstalledAgent()
                 );
             LOGGER.info("[PatchBukkit] Successfully patched TickThread.isTickThread()");
+            // Packet handlers called from Bukkit code (openInventory -> handleContainerClose) check
+            // PacketProcessor.isSameThread, which compares against the thread captured at startup. On any
+            // other thread the packet is queued on a queue the headless server never drains, then
+            // RunningOnDifferentThreadException is thrown: answer like isTickThread instead.
+            new ByteBuddy()
+                .redefine(net.minecraft.network.PacketProcessor.class)
+                .method(ElementMatchers.named("isSameThread"))
+                .intercept(MethodDelegation.to(TickThreadInterceptor.class))
+                .make()
+                .load(
+                    net.minecraft.network.PacketProcessor.class.getClassLoader(),
+                    ClassReloadingStrategy.fromInstalledAgent()
+                );
+            LOGGER.info("[PatchBukkit] Successfully patched PacketProcessor.isSameThread()");
         } catch (Throwable t) {
             LOGGER.log(Level.WARNING, "[PatchBukkit] Failed to patch TickThread with ByteBuddyAgent", t);
         }
