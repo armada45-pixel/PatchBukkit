@@ -147,11 +147,18 @@ impl CommandExecutor for JavaCommandExecutor {
             crate::java::native_callbacks::utils::cache_player(player.clone());
         }
 
-        // The command line always gets a leading `/` prefix. The Java side strips exactly one, so
-        // commands whose name itself starts with `/` (WorldEdit's `//wand`) keep theirs.
-        let full_command = match context.get_argument::<String>(ARG_ANY) {
-            Ok(msg) => format!("/{} {}", self.cmd_name, msg),
-            Err(_) => format!("/{}", self.cmd_name),
+        // Forward the literal that was typed, not `cmd_name`: a command is registered as `name` plus a
+        // `/name` alias, and WorldEdit's `//pos1` must reach Paper as `/pos1` (as `pos1` WorldEdit
+        // ignores it). The command line always gets a leading `/` and the Java side strips exactly one.
+        let args = context.get_argument::<String>(ARG_ANY);
+        let label = context
+            .nodes
+            .last()
+            .and_then(|n| typed_label(&context.input, n.range.start, n.range.end, args.is_ok()))
+            .unwrap_or(&self.cmd_name);
+        let full_command = match args {
+            Ok(msg) => format!("/{label} {msg}"),
+            Err(_) => format!("/{label}"),
         };
 
         let command_sender: SimpleCommandSender = (&context.source.output).into();
@@ -205,6 +212,17 @@ impl CommandExecutor for JavaCommandExecutor {
     }
 }
 
+/// The command literal as typed. Aliases are redirects, so with arguments the executed context holds
+/// only the argument node: the literal is then the word right before it.
+fn typed_label(input: &str, start: usize, end: usize, has_args: bool) -> Option<&str> {
+    let label = if has_args {
+        input.get(..start)?.trim_end().rsplit(' ').next()?
+    } else {
+        input.get(start..end)?
+    };
+    (!label.is_empty()).then_some(label)
+}
+
 pub fn init_java_command(
     cmd_name: impl Into<String>,
     command_tx: mpsc::Sender<JvmCommand>,
@@ -229,6 +247,15 @@ pub fn init_java_command(
 mod tests {
     use super::*;
     use pumpkin::command::dispatcher::CommandDispatcher;
+
+    #[test]
+    fn typed_label_reads_the_literal_before_the_arguments() {
+        assert_eq!(typed_label("cg tool", 3, 7, true), Some("cg"));
+        assert_eq!(typed_label("/set glass", 5, 10, true), Some("/set"));
+        assert_eq!(typed_label("execute run ap help", 15, 19, true), Some("ap"));
+        assert_eq!(typed_label("/pos1", 0, 5, false), Some("/pos1"));
+        assert_eq!(typed_label("", 0, 0, false), None);
+    }
 
     #[test]
     fn test_init_java_command_registration() {
