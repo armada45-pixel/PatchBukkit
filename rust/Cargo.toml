@@ -84,6 +84,8 @@ not_unsafe_ptr_arg_deref = "allow" # Not sure about this one
 # Local only: one arc-swap debt list shared by Pumpkin and its plugins (see vendor/arc-swap).
 [patch.crates-io]
 arc-swap = { path = "../../vendor/arc-swap" }
+# Local only: shard locks wake across the server and plugin copies of dashmap (see vendor/dashmap).
+dashmap = { path = "../../vendor/dashmap" }
 
 # local: build against the same Pumpkin source as the server binary (dev/Pumpkin), not the git tag.
 [patch."https://github.com/Pumpkin-MC/Pumpkin.git"]

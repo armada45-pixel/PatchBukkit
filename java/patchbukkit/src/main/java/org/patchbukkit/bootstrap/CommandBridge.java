@@ -554,7 +554,7 @@ public final class CommandBridge {
             if (HeadlessPaperServer.isBooted()) {
                 try {
                     boolean handled = HeadlessPaperServer.get().server.dispatchCommand(sender, cmdWithoutSlash);
-                    LOGGER.info("[PatchBukkit] dispatchCommand('" + commandLabel(cmdWithoutSlash) + "') sender=" + sender.getName()
+                    LOGGER.info("[PatchBukkit] dispatchCommand('" + cmdWithoutSlash.split("(?U)\\s+", 2)[0] + "') sender=" + sender.getName()
                         + " (" + sender.getClass().getSimpleName() + ") -> " + handled);
                     if (handled) {
                         return true;
