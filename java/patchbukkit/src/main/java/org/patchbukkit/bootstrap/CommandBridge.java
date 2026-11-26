@@ -298,6 +298,11 @@ public final class CommandBridge {
         // Namespaced labels (essentials:give) are mirrored as their own commands, like on Paper.
         String targetName = clean;
         if (!REGISTERED_COMMANDS.add(targetName)) return;
+        // A namespaced label must not take the plain aliases: it is mirrored first, so it would claim `/cg` and the
+        // plugin would get the label `commandgui:commandgui` for `/cg`. Its namespaced aliases have their own entries.
+        if (targetName.contains(":")) {
+            aliases = Collections.emptyList();
+        }
         if (aliases != null) {
             for (String alias : aliases) {
                 if (alias != null && !alias.isBlank()) {
