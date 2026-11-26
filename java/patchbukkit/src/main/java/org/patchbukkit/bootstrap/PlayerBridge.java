@@ -125,7 +125,9 @@ public final class PlayerBridge {
                     .visit(Advice.to(OnSetOpAdvice.class).on(ElementMatchers.named("setOp").and(ElementMatchers.takesArguments(boolean.class))))
                     .visit(Advice.to(OnGetCooldownAdvice.class).on(ElementMatchers.named("getCooldown").and(ElementMatchers.takesArguments(Key.class))))
                     .visit(Advice.to(OnSetCooldownAdvice.class).on(ElementMatchers.named("setCooldown").and(ElementMatchers.takesArguments(Key.class, int.class))))
-                    .visit(Advice.to(OnGetEnderChestAdvice.class).on(ElementMatchers.named("getEnderChest").and(ElementMatchers.takesNoArguments())))
+                    // Opening (not reading: Multiverse-Inventories reads it on every world change) the player's own
+                    // ender chest shows Pumpkin's, which holds the real contents.
+                    .visit(Advice.to(OnOpenInventoryAdvice.class).on(ElementMatchers.named("openInventory").and(ElementMatchers.takesArguments(org.bukkit.inventory.Inventory.class))))
                     .make())
                     .load(CraftHumanEntity.class.getClassLoader(), ClassReloadingStrategy.fromInstalledAgent());
             } catch (Throwable t) {
@@ -1557,10 +1559,24 @@ public final class PlayerBridge {
         }
     }
 
-    public static final class OnGetEnderChestAdvice {
-        @Advice.OnMethodEnter
-        public static void onEnter(@Advice.This CraftHumanEntity human) {
-            PlayerBridge.pushOpenEnderChestToPumpkin(human);
+    /** True when {@code inventory} is the player's own ender chest and Pumpkin opened it instead. */
+    public static boolean openOwnEnderChestInPumpkin(CraftHumanEntity human, org.bukkit.inventory.Inventory inventory) {
+        if (inventory == null || !NativeFastPathFfi.isInitialized() || !inventory.equals(human.getEnderChest())) return false;
+        pushOpenEnderChestToPumpkin(human);
+        return true;
+    }
+
+    public static final class OnOpenInventoryAdvice {
+        @Advice.OnMethodEnter(skipOn = Advice.OnNonDefaultValue.class)
+        public static boolean onEnter(@Advice.This CraftHumanEntity human, @Advice.Argument(0) org.bukkit.inventory.Inventory inventory) {
+            return PlayerBridge.openOwnEnderChestInPumpkin(human, inventory);
+        }
+
+        /** The skipped original would return null: callers use the view (`openInventory(x).getTopInventory()`). */
+        @Advice.OnMethodExit
+        public static void onExit(@Advice.Enter boolean skipped, @Advice.This CraftHumanEntity human,
+                @Advice.Return(readOnly = false, typing = net.bytebuddy.implementation.bytecode.assign.Assigner.Typing.DYNAMIC) Object view) {
+            if (skipped) view = human.getOpenInventory();
         }
     }
 
