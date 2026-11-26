@@ -2192,6 +2192,7 @@ dependencies = [
  "env_logger",
  "glob",
  "jni",
+ "libc",
  "log",
  "prost",
  "prost-build",

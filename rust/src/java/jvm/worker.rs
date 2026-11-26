@@ -35,6 +35,8 @@ thread_local! {
     static CURRENT_THREAD_ID: usize = NEXT_THREAD_ID.fetch_add(1, Ordering::Relaxed);
     static THREAD_ATTACHED: Cell<bool> = const { Cell::new(false) };
     static IS_JVM_WORKER_THREAD: Cell<bool> = const { Cell::new(false) };
+    /// Entries into Java from PatchBukkit still running on this thread (see `on_java_capable_stack`).
+    static IN_JAVA: Cell<u32> = const { Cell::new(0) };
 }
 
 #[inline]
@@ -156,10 +158,107 @@ pub fn is_jvm_worker_thread() -> bool {
     IS_JVM_WORKER_THREAD.with(Cell::get) || PRIMARY_LOCK.is_locked_by_current_thread()
 }
 
+/// Wasm plugins run on Wasmtime fiber stacks. HotSpot checks the stack pointer against the thread's own stack and
+/// throws `StackOverflowError` for Java entered from anywhere else, so such calls run on a short-lived helper thread.
+/// Not when this thread is already inside Java further up (`IN_JAVA`, worker thread or `PRIMARY_LOCK` owner): the
+/// helper could wait on a monitor this thread holds, and a deadlock is worse than the error.
+/// shortcut: one thread per hopped call; switch to a pooled helper if Wasm plugins start sending many packets a tick.
+/// shortcut: Java-created threads that call into Pumpkin are not counted in `IN_JAVA`; count them if one hangs.
+fn on_java_capable_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    if IN_JAVA.with(Cell::get) > 0 || is_jvm_worker_thread() || on_thread_stack() {
+        return in_java(f);
+    }
+    let hop = || {
+        std::thread::scope(|s| {
+            std::thread::Builder::new()
+                .name("PatchBukkit-WasmHop".into())
+                .spawn_scoped(s, || in_java(f))
+                .expect("spawn PatchBukkit-WasmHop thread")
+                .join()
+        })
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    };
+    // As the code that ran Java on the worker itself did: let tokio replace the worker while it waits.
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::block_in_place(hop)
+    } else {
+        hop()
+    }
+}
+
+fn in_java<R>(f: impl FnOnce() -> R) -> R {
+    struct Depth;
+    impl Drop for Depth {
+        fn drop(&mut self) {
+            IN_JAVA.with(|d| d.set(d.get() - 1));
+        }
+    }
+    IN_JAVA.with(|d| d.set(d.get() + 1));
+    let _depth = Depth;
+    f()
+}
+
+/// Whether the stack pointer lies inside this OS thread's own stack (always true where that cannot be read).
+fn on_thread_stack() -> bool {
+    thread_local! {
+        static BOUNDS: Cell<Option<(usize, usize)>> = const { Cell::new(None) };
+    }
+    let probe = 0u8;
+    let sp = std::hint::black_box(&raw const probe) as usize;
+    let (low, high) = BOUNDS.with(|b| {
+        b.get().unwrap_or_else(|| {
+            let bounds = thread_stack_bounds();
+            b.set(Some(bounds));
+            bounds
+        })
+    });
+    (low..high).contains(&sp)
+}
+
+#[cfg(target_os = "linux")]
+fn thread_stack_bounds() -> (usize, usize) {
+    // SAFETY: plain pthread queries on the calling thread; `attr` is initialised by pthread_getattr_np.
+    unsafe {
+        let mut attr: libc::pthread_attr_t = std::mem::zeroed();
+        if libc::pthread_getattr_np(libc::pthread_self(), &mut attr) != 0 {
+            tracing::warn!(
+                "Cannot read this thread's stack bounds; Java calls from Wasm plugins may overflow"
+            );
+            return (0, usize::MAX);
+        }
+        let mut addr = std::ptr::null_mut();
+        let mut size = 0;
+        let ok = libc::pthread_attr_getstack(&attr, &mut addr, &mut size) == 0;
+        libc::pthread_attr_destroy(&mut attr);
+        if ok {
+            (addr as usize, addr as usize + size)
+        } else {
+            (0, usize::MAX)
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn thread_stack_bounds() -> (usize, usize) {
+    (0, usize::MAX)
+}
+
 /// Like [`dispatch_packet_direct`] but returns the Java upcall result (`None` if not dispatched).
 /// For outbound packets `Some(1)` means the Java pipeline now owns delivery of the packet.
 #[must_use]
 pub fn dispatch_packet_direct_result(
+    player: &Arc<Player>,
+    server: &Arc<Server>,
+    packet_id: i32,
+    payload: &[u8],
+    is_outbound: bool,
+) -> Option<i32> {
+    on_java_capable_stack(|| {
+        dispatch_packet_direct_result_here(player, server, packet_id, payload, is_outbound)
+    })
+}
+
+fn dispatch_packet_direct_result_here(
     player: &Arc<Player>,
     server: &Arc<Server>,
     packet_id: i32,
@@ -182,6 +281,18 @@ pub fn dispatch_packet_direct_result(
 /// without Protobuf encoding, payload cloning, or cross-thread channel hopping.
 #[must_use]
 pub fn dispatch_packet_direct(
+    player: &Arc<Player>,
+    server: &Arc<Server>,
+    packet_id: i32,
+    payload: &[u8],
+    is_outbound: bool,
+) -> bool {
+    on_java_capable_stack(|| {
+        dispatch_packet_direct_here(player, server, packet_id, payload, is_outbound)
+    })
+}
+
+fn dispatch_packet_direct_here(
     player: &Arc<Player>,
     server: &Arc<Server>,
     packet_id: i32,
@@ -214,6 +325,10 @@ fn is_async_bukkit_event(payload: &JvmEventPayload) -> bool {
 ///   with zero channel hop.
 #[must_use]
 pub fn fire_event_direct(payload: JvmEventPayload, plugin: String) -> Option<FireEventResponse> {
+    on_java_capable_stack(|| fire_event_direct_here(payload, plugin))
+}
+
+fn fire_event_direct_here(payload: JvmEventPayload, plugin: String) -> Option<FireEventResponse> {
     let jvm = GLOBAL_JVM.get()?;
     let original_event = payload.event.clone();
     let is_async = is_async_bukkit_event(&payload);
@@ -249,6 +364,13 @@ pub fn trigger_command_direct(
     full_command: String,
     command_sender: SimpleCommandSender,
 ) -> Option<anyhow::Result<()>> {
+    on_java_capable_stack(|| trigger_command_direct_here(full_command, command_sender))
+}
+
+fn trigger_command_direct_here(
+    full_command: String,
+    command_sender: SimpleCommandSender,
+) -> Option<anyhow::Result<()>> {
     let jvm = GLOBAL_JVM.get()?;
     let _guard = PRIMARY_LOCK.lock();
     let res = jvm
@@ -263,6 +385,14 @@ pub fn trigger_command_direct(
 /// Computes command tab-completions directly on the calling thread while holding the re-entrant primary lock.
 #[must_use]
 pub fn get_tab_complete_direct(
+    command_sender: SimpleCommandSender,
+    full_command: String,
+    location: Option<Location>,
+) -> Option<Option<Vec<CommandSuggestion>>> {
+    on_java_capable_stack(|| get_tab_complete_direct_here(command_sender, full_command, location))
+}
+
+fn get_tab_complete_direct_here(
     command_sender: SimpleCommandSender,
     full_command: String,
     location: Option<Location>,
