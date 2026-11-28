@@ -60,6 +60,8 @@ public class PatchBukkitEventFactory {
                     dispatchPaperPlayerConnectionValidateLoginEvent(apple, pluginName);
                 } else if (event instanceof org.bukkit.event.player.PlayerPreLoginEvent pple) {
                     dispatchPaperPlayerConnectionValidateLoginEvent(pple, pluginName);
+                } else if (event instanceof org.bukkit.event.entity.EntityPickupItemEvent epie) {
+                    dispatchPlayerPickupItemEvent(epie, pluginName);
                 }
                 Runnable unhide = event instanceof org.bukkit.event.player.PlayerLoginEvent ple
                     ? org.patchbukkit.network.VirtualChannelManager.getInstance().hideFromPlayerList(ple.getPlayer().getUniqueId())
@@ -70,11 +72,13 @@ public class PatchBukkitEventFactory {
                             continue;
                         }
                         if (!listener.getPlugin().isEnabled()) continue;
+                        boolean before = event instanceof org.bukkit.event.Cancellable c && c.isCancelled();
                         try {
                             listener.callEvent(event);
                         } catch (Throwable ex) {
                             LOGGER.log(Level.SEVERE, "Could not pass event " + event.getEventName() + " to " + listener.getPlugin().getName(), ex);
                         }
+                        logCancelChange(event, before, listener);
                     }
                 } finally {
                     if (unhide != null) unhide.run();
@@ -193,6 +197,67 @@ public class PatchBukkitEventFactory {
         } catch (Throwable t) {
             LOGGER.log(Level.FINE, "Failed to dispatch Paper PlayerArmSwingEvent", t);
         }
+    }
+
+    private static Boolean traceCancels;
+
+    /**
+     * Devmode ({@code log-level = "debug"} or {@code debug-bridge = true}): which plugin cancelled or un-cancelled an event, for "nothing happens" bugs.
+     * Logged at INFO: Paper's log4j config takes over JUL levels after boot, so FINE never prints.
+     */
+    private static void logCancelChange(org.bukkit.event.Event event, boolean before, org.bukkit.plugin.RegisteredListener listener) {
+        if (!(event instanceof org.bukkit.event.Cancellable c) || c.isCancelled() == before) return;
+        if (traceCancels == null) {
+            try {
+                var cfg = patchbukkit.bridge.NativeBridgeFfi.getPatchBukkitConfig(patchbukkit.common.EmptyRequest.newBuilder().build());
+                traceCancels = cfg.getDebugBridge() || java.util.Set.of("debug", "trace", "all").contains(cfg.getLogLevel().toLowerCase(java.util.Locale.ROOT).trim());
+            } catch (Throwable t) {
+                traceCancels = false;
+            }
+        }
+        if (!traceCancels) return;
+        LOGGER.info("[cancel] " + event.getEventName() + (before ? " un-cancelled by " : " cancelled by ")
+            + listener.getPlugin().getName() + " (" + listener.getListener().getClass().getName() + ", " + listener.getPriority() + ")");
+    }
+
+    /**
+     * The generic factory gave plugins a pig as the item and STONE as the stack, so plugins that check the item
+     * (EssentialsAntiBuild pickup meta-permissions, WorldGuard) judged the wrong thing. Build a real {@code Item} at the item entity's place, with Pumpkin's entity id.
+     * Null (nothing fired) for XP orbs, arrows and tridents: Paper fires no EntityPickupItemEvent for those.
+     */
+    @Nullable
+    private static org.bukkit.event.entity.EntityPickupItemEvent entityPickupItem(patchbukkit.events.EntityPickupItemEvent ev) {
+        org.bukkit.Material mat = org.bukkit.Material.matchMaterial(ev.getItemName());
+        if (mat == null || mat.isAir() || !mat.isItem()) return null;
+        if (!(getEntity(ev.getEntityId()) instanceof org.bukkit.entity.LivingEntity picker)) return null;
+        var level = ((org.bukkit.craftbukkit.CraftWorld) picker.getWorld()).getHandle();
+        var nms = new net.minecraft.world.entity.item.ItemEntity(level, ev.getItemX(), ev.getItemY(), ev.getItemZ(),
+            org.bukkit.craftbukkit.inventory.CraftItemStack.asNMSCopy(new ItemStack(mat, Math.max(1, ev.getCount()))));
+        nms.setId(ev.getItemEntityId());
+        // shortcut: remaining is always 0 (Pumpkin fires before it knows how much fits); plugins that read it get 0.
+        return new org.bukkit.event.entity.EntityPickupItemEvent(picker, (org.bukkit.entity.Item) nms.getBukkitEntity(), 0);
+    }
+
+    /** Paper fires the deprecated PlayerPickupItemEvent first and carries its cancel into EntityPickupItemEvent. */
+    @SuppressWarnings("deprecation")
+    private static void dispatchPlayerPickupItemEvent(org.bukkit.event.entity.EntityPickupItemEvent epie, String pluginName) {
+        if (!(epie.getEntity() instanceof Player player)) return;
+        org.bukkit.plugin.RegisteredListener[] listeners =
+            org.bukkit.event.player.PlayerPickupItemEvent.getHandlerList().getRegisteredListeners();
+        if (listeners.length == 0) return;
+        var playerEvent = new org.bukkit.event.player.PlayerPickupItemEvent(player, epie.getItem(), epie.getRemaining());
+        for (org.bukkit.plugin.RegisteredListener listener : listeners) {
+            if (pluginName != null && !pluginName.isEmpty() && !listener.getPlugin().getName().equals(pluginName)) continue;
+            if (!listener.getPlugin().isEnabled()) continue;
+            boolean before = playerEvent.isCancelled();
+            try {
+                listener.callEvent(playerEvent);
+            } catch (Throwable ex) {
+                LOGGER.log(Level.SEVERE, "Could not pass event PlayerPickupItemEvent to " + listener.getPlugin().getName(), ex);
+            }
+            logCancelChange(playerEvent, before, listener);
+        }
+        if (playerEvent.isCancelled()) epie.setCancelled(true);
     }
 
     private static void dispatchPaperPlayerJumpEvent(
@@ -1662,7 +1727,7 @@ public class PatchBukkitEventFactory {
             }
             case ENTITY_PICKUP_ITEM -> {
                 var ev = event.getEntityPickupItem();
-                yield createGenericBukkitEvent("org.bukkit.event.entity.EntityPickupItemEvent", ev);
+                yield entityPickupItem(ev);
             }
             case ENTITY_PLACE -> {
                 var ev = event.getEntityPlace();

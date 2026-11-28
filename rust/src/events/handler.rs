@@ -3745,6 +3745,10 @@ impl_cancellable_event!(
             entity_id: self.entity_id,
             item_name: self.item_name.clone(),
             count: u32::from(self.count),
+            item_entity_id: self.item_entity_id,
+            item_x: self.item_position.x,
+            item_y: self.item_position.y,
+            item_z: self.item_position.z,
         }),
         None
     )

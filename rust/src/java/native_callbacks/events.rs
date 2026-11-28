@@ -350,7 +350,8 @@ pub fn ffi_native_bridge_register_event_impl(request: RegisterEventRequest) -> O
         "org.bukkit.event.entity.EntityKnockbackEvent" => pumpkin::plugin::entity::entity_knockback::EntityKnockbackEvent,
         "org.bukkit.event.entity.EntityKnockbackByEntityEvent" => pumpkin::plugin::entity::entity_knockback_by_entity::EntityKnockbackByEntityEvent,
         "org.bukkit.event.entity.EntityMountEvent" => pumpkin::plugin::entity::entity_mount::EntityMountEvent,
-        "org.bukkit.event.entity.EntityPickupItemEvent" => pumpkin::plugin::entity::entity_pickup_item::EntityPickupItemEvent,
+        "org.bukkit.event.entity.EntityPickupItemEvent"
+        | "org.bukkit.event.player.PlayerPickupItemEvent" => pumpkin::plugin::entity::entity_pickup_item::EntityPickupItemEvent,
         "org.bukkit.event.entity.EntityPlaceEvent" => pumpkin::plugin::entity::entity_place::EntityPlaceEvent,
         "org.bukkit.event.entity.EntityPortalEvent" => pumpkin::plugin::entity::entity_portal::EntityPortalEvent,
         "org.bukkit.event.entity.EntityPortalEnterEvent" => pumpkin::plugin::entity::entity_portal_enter::EntityPortalEnterEvent,

@@ -195,6 +195,10 @@ message EntityPickupItemEvent {
   int32 entity_id = 1;
   string item_name = 2;
   uint32 count = 3;
+  int32 item_entity_id = 4;
+  double item_x = 5;
+  double item_y = 6;
+  double item_z = 7;
 }
 
 message EntityPlaceEvent {
