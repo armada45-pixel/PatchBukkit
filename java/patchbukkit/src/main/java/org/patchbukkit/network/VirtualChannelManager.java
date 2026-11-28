@@ -214,6 +214,7 @@ public final class VirtualChannelManager {
             // Player.isValid() is false and CraftEntity.teleport0 refuses every teleport.
             serverPlayer.valid = true;
             serverPlayers.put(uuid, serverPlayer);
+            markPlayedBefore(serverPlayer, uuid, dedicatedServer);
 
             // Trigger server channel accept handlers (e.g. PacketEvents ServerChannelHandler)
             // and transition injected packet listeners through Handshake -> Login -> Configuration -> Play.
@@ -226,6 +227,39 @@ public final class VirtualChannelManager {
             LOGGER.log(Level.WARNING, "[VirtualChannelManager] Failed to construct ServerPlayer for " + uuid, t);
             return null;
         }
+    }
+
+    /**
+     * Paper sets hasPlayedBefore and first/last played in CraftPlayer.readExtraData, called when PlayerList.load
+     * finds saved data. That path never runs for these players, so every join looked like a first join
+     * (Multiverse first-spawn-override teleported players on each login, Essentials showed "first login" = now).
+     * Pumpkin saves the player under the same level folder: the file exists = played before; its mtime is the last
+     * save (quit or autosave), the closest thing to lastPlayed. Pumpkin's data has no first-played time.
+     */
+    private static void markPlayedBefore(net.minecraft.server.level.ServerPlayer serverPlayer, UUID uuid,
+                                         net.minecraft.server.dedicated.DedicatedServer server) {
+        try {
+            org.bukkit.craftbukkit.entity.CraftPlayer player = serverPlayer.getBukkitEntity();
+            java.nio.file.Path data = java.nio.file.Paths.get(server.getProperties().levelName, "players", "data", uuid + ".dat");
+            if (!java.nio.file.Files.exists(data)) {
+                player.setFirstPlayed(System.currentTimeMillis()); // as Paper's placeNewPlayer does for a new player
+                return;
+            }
+            java.nio.file.attribute.BasicFileAttributes attrs =
+                java.nio.file.Files.readAttributes(data, java.nio.file.attribute.BasicFileAttributes.class);
+            long last = attrs.lastModifiedTime().toMillis();
+            player.setFirstPlayed(Math.min(attrs.creationTime().toMillis(), last));
+            setCraftPlayerField(player, "lastPlayed", last);
+            setCraftPlayerField(player, "hasPlayedBefore", true);
+        } catch (Throwable t) {
+            LOGGER.log(Level.WARNING, "[VirtualChannelManager] Could not restore hasPlayedBefore for " + uuid, t);
+        }
+    }
+
+    private static void setCraftPlayerField(Object player, String name, Object value) throws ReflectiveOperationException {
+        java.lang.reflect.Field f = org.bukkit.craftbukkit.entity.CraftPlayer.class.getDeclaredField(name);
+        f.setAccessible(true);
+        f.set(player, value);
     }
 
     /**
