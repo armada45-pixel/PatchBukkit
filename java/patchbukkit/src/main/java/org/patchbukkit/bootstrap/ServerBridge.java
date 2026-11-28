@@ -517,10 +517,13 @@ public final class ServerBridge {
         if (creator == null || !NativeFastPathFfi.isInitialized() || SYNCING.get()) return null;
         World existing = server.getWorld(creator.name());
         if (existing != null) return existing;
-        if (creator.environment() != World.Environment.NORMAL) {
-            // A second nether/end World made from the plugin crashes Pumpkin's tick loop (SIGSEGV in flush_block_updates).
-            throw new IllegalStateException("PatchBukkit: extra " + creator.environment() + " worlds are not supported on Pumpkin yet ('" + creator.name() + "')");
-        }
+        // The Pumpkin world must have the dimension Paper's level gets: a nether/end level backed by an
+        // overworld-shaped world (other height and section count) crashed the tick loop in flush_block_updates.
+        String dimension = switch (creator.environment()) {
+            case NETHER -> "minecraft:the_nether";
+            case THE_END -> "minecraft:the_end";
+            default -> "minecraft:overworld";
+        };
         SYNCING.set(true);
         try {
             NamespacedKey key = creator.key();
@@ -528,7 +531,7 @@ public final class ServerBridge {
             CreateWorldResponse res = NativeBridgeFfi.createWorld(
                 CreateWorldRequest.newBuilder()
                     .setName(folder)
-                    .setDimension("minecraft:overworld")
+                    .setDimension(dimension)
                     .setSeed(creator.seed())
                     .build()
             );
